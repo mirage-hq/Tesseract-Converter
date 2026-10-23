@@ -69,15 +69,19 @@ pub(crate) fn save_tesseract_as_premiere(
         source,
         output,
         frame_rate,
+        None,
         check,
         fx_conv::Progress::default(),
     )
 }
 
+/// `hdr` is the explicit PQ/HLG working/output target of
+/// [`crate::PremiereExportOptions::hdr`]; `None` writes an SDR sequence.
 pub(crate) fn save_tesseract_as_premiere_with_progress(
     source: &Path,
     output: &Path,
     frame_rate: FrameRate,
+    hdr: Option<fx_conv::HdrTransfer>,
     check: bool,
     progress: fx_conv::Progress<'_>,
 ) -> Result<fx_conv::ConversionReport<crate::Omission>> {
@@ -93,7 +97,7 @@ pub(crate) fn save_tesseract_as_premiere_with_progress(
         &file,
         file.project(),
         &crate::PremiereExportOptions {
-            hdr: None,
+            hdr,
             frame_rate: Some(frame_rate),
         },
         progress,
@@ -101,6 +105,7 @@ pub(crate) fn save_tesseract_as_premiere_with_progress(
     progress.stage("serializing and validating Premiere package");
     let (mut project, omissions) = prepared.into_native()?;
     bind_media(&mut project, &file, &output)?;
+    let input_luts = bind_input_luts(&mut project);
 
     // The XML is temporary. Check drops it; execution writes these exact bytes.
     let xml = PremiereProjectXml::new(&project)?;
@@ -111,15 +116,33 @@ pub(crate) fn save_tesseract_as_premiere_with_progress(
     }
     if !check {
         progress.stage("writing and publishing Premiere package");
-        publish_package(&source, &source_hash, &file, &output, &project, &xml)?;
+        publish_package(
+            &source,
+            &source_hash,
+            &file,
+            &output,
+            &project,
+            &xml,
+            &input_luts,
+        )?;
     }
     let artifacts = std::iter::once(fx_conv::Artifact::project("project.prproj"))
+        .chain(
+            input_luts
+                .iter()
+                .map(|(name, _)| fx_conv::Artifact::media(name)),
+        )
         .chain(
             project
                 .media
                 .values()
                 .filter(|media| !media.is_generator())
                 .map(|media| fx_conv::Artifact::media(Path::new("media").join(&media.name))),
+        )
+        .chain(
+            crate::lut_assets::bound_lut_files(&project)
+                .into_iter()
+                .map(|(_, name)| fx_conv::Artifact::media(Path::new("media").join(name))),
         )
         .collect();
     Ok(fx_conv::ConversionReport {
@@ -132,6 +155,65 @@ fn sequence(project: &PrProjectFile) -> Result<&crate::format::PrSequence> {
     project
         .single_sequence()
         .ok_or_else(|| unsupported("Premiere conversion requires exactly one sequence"))
+}
+
+/// Reads the `.cube` asset of every `source.inputTransform` `lut3d` that
+/// export writes as a clip Input LUT; an unreadable asset records why.
+fn inspect_input_luts(
+    file: &TesseractFile,
+    document: &fx_schema::EditableFxCompositionDocument,
+) -> Result<crate::cube_lut::InputLutAssets> {
+    let composition = document.composition();
+    let dimensions = document.dimensions();
+    let canvas = [dimensions.width, dimensions.height];
+    let layers =
+        crate::convert::exported_video_layers(composition.layers(), composition.dynamics(), canvas)
+            .into_iter()
+            .chain(crate::convert::exported_image_layers(
+                composition.layers(),
+                composition.dynamics(),
+                canvas,
+            ));
+    let mut luts = crate::cube_lut::InputLutAssets::new();
+    for layer in layers {
+        let transform = match (video_data(layer)?, layer.data()) {
+            (Some(video), _) => video.source.input_transform().cloned(),
+            (None, fx_schema::LayerData::Image(image)) => image.source.input_transform().cloned(),
+            (None, _) => None,
+        };
+        let Some(fx_schema::InputColorTransform::Lut3d { asset_id, .. }) =
+            transform.map(|transform| transform.transform)
+        else {
+            continue;
+        };
+        if luts.contains_key(asset_id.as_str()) {
+            continue;
+        }
+        let packaged = (|| -> std::result::Result<_, String> {
+            let asset = file
+                .asset(asset_id.as_str())
+                .map_err(|error| format!("is not packaged ({error})"))?;
+            let file_name = Path::new(&asset.descriptor().path)
+                .file_name()
+                .and_then(|name| name.to_str())
+                .filter(|name| name.is_ascii())
+                .map_or_else(|| "input-lut.cube".to_owned(), str::to_owned);
+            let mut bytes = Vec::new();
+            let mut reader = asset
+                .open()
+                .map_err(|error| format!("cannot be read ({error})"))?;
+            std::io::Read::read_to_end(&mut reader, &mut bytes)
+                .map_err(|error| format!("cannot be read ({error})"))?;
+            if hash_reader(std::io::Cursor::new(&bytes)).map_err(|error| error.to_string())?
+                != asset.descriptor().sha256
+            {
+                return Err("failed its packaged hash".to_owned());
+            }
+            crate::cube_lut::PackagedLut::parse(&file_name, &bytes)
+        })();
+        luts.insert(asset_id.as_str().to_owned(), packaged);
+    }
+    Ok(luts)
 }
 
 /// Inspects each asset that `document`, the baked form of the archive's
@@ -161,7 +243,10 @@ fn inspect_media(
             (Some(video), _) => active_asset_id(&video.source).as_str(),
             (None, fx_schema::LayerData::Image(image)) => {
                 let fx_schema::ImageSource::Asset(source) = &image.source;
-                source.asset_id.as_str()
+                let Some(asset_id) = source.asset_id.value() else {
+                    continue;
+                };
+                asset_id.as_str()
             }
             (None, _) => continue,
         };
@@ -425,7 +510,7 @@ fn bind_media(project: &mut PrProjectFile, file: &TesseractFile, output: &Path) 
             (MediaPathField::FilePath, absolute),
         ];
     }
-    Ok(())
+    crate::lut_assets::bind_luts(project, file, output)
 }
 
 fn copy_native_media(
@@ -459,7 +544,11 @@ fn copy_native_media_except(
             ));
         }
     }
-    Ok(())
+    crate::lut_assets::copy_luts(
+        file,
+        directory,
+        &crate::lut_assets::bound_lut_files(project),
+    )
 }
 
 fn publish_package(
@@ -469,6 +558,7 @@ fn publish_package(
     output: &Path,
     project: &PrProjectFile,
     xml: &PremiereProjectXml,
+    input_luts: &[(String, String)],
 ) -> Result<()> {
     output_is_fresh(output)?;
     if hash(source)? != source_hash {
@@ -483,10 +573,12 @@ fn publish_package(
         .prefix(".conversion-premiere-")
         .tempdir_in(parent)?;
     copy_native_media(file, temporary.path(), project)?;
+    write_input_luts(temporary.path(), input_luts)?;
     xml.write_new(&temporary.path().join("project.prproj"))?;
     if hash(source)? != source_hash {
         return Err(unsupported("source changed during the Premiere build"));
     }
+    let luts = crate::lut_assets::bound_lut_files(project);
     publish(
         temporary.path(),
         output,
@@ -494,8 +586,68 @@ fn publish_package(
             .media
             .values()
             .filter(|media| !media.is_generator())
-            .map(|media| &media.name),
+            .map(|media| &media.name)
+            .chain(luts.iter().map(|(_, name)| name)),
+        input_luts.iter().map(|(name, _)| name),
     )
+}
+
+/// Give each distinct clip Input LUT of `project` one `.cube` file beside
+/// `project.prproj`, renaming same-named different tables apart, and return
+/// each file's name and text. Premiere embeds the samples in the project, so
+/// the file only lets a user re-browse the same LUT. Names of the Lumetri LUT
+/// files bound in `media` are avoided too: import looks for a Lumetri LUT's
+/// saved name beside the project first, so a same-named Input LUT file there
+/// would replace it.
+fn bind_input_luts(project: &mut PrProjectFile) -> Vec<(String, String)> {
+    let lumetri_files: Vec<String> = crate::lut_assets::bound_lut_files(project)
+        .into_iter()
+        .map(|(_, name)| name)
+        .collect();
+    let mut files: Vec<(String, String)> = Vec::new();
+    let mut named: BTreeMap<String, String> = BTreeMap::new();
+    for media in project.media.values_mut() {
+        let Some(lut) = media
+            .video
+            .as_mut()
+            .and_then(|video| video.input_lut.as_mut())
+        else {
+            continue;
+        };
+        if let Some(name) = named.get(&lut.id) {
+            lut.file_name.clone_from(name);
+            continue;
+        }
+        let stem = lut
+            .file_name
+            .strip_suffix(".cube")
+            .unwrap_or(&lut.file_name)
+            .to_owned();
+        let mut name = format!("{stem}.cube");
+        let mut suffix = 1;
+        while files
+            .iter()
+            .map(|(taken, _)| taken)
+            .chain(&lumetri_files)
+            .any(|taken| taken.eq_ignore_ascii_case(&name))
+        {
+            suffix += 1;
+            name = format!("{stem}-{suffix}.cube");
+        }
+        lut.file_name.clone_from(&name);
+        named.insert(lut.id.clone(), name.clone());
+        files.push((name, lut.table.to_cube(&lut.display_name)));
+    }
+    files
+}
+
+fn write_input_luts(directory: &Path, input_luts: &[(String, String)]) -> Result<()> {
+    for (name, text) in input_luts {
+        let mut file = File::create_new(directory.join(name))?;
+        std::io::Write::write_all(&mut file, text.as_bytes())?;
+        file.sync_all()?;
+    }
+    Ok(())
 }
 
 // create_dir reserves the destination; publish_file never replaces an existing entry.
@@ -504,6 +656,7 @@ fn publish<'a>(
     temporary: &Path,
     output: &Path,
     names: impl Iterator<Item = &'a String>,
+    beside_project: impl Iterator<Item = &'a String>,
 ) -> Result<()> {
     fs::create_dir(output)?;
     let media = output.join("media");
@@ -515,6 +668,11 @@ fn publish<'a>(
         for name in names {
             let target = media.join(name);
             publish_file(&temporary.join("media").join(name), &target, fs::hard_link)?;
+            files.push(target);
+        }
+        for name in beside_project {
+            let target = output.join(name);
+            publish_file(&temporary.join(name), &target, fs::hard_link)?;
             files.push(target);
         }
         let target = output.join("project.prproj");
@@ -547,7 +705,7 @@ mod tests {
         fs::write(staged.join("media/first.mp4"), b"original").unwrap();
         let output = root.path().join("out");
         let names = ["first.mp4".to_owned(), "missing.mp4".to_owned()];
-        let result = publish(&staged, &output, names.iter());
+        let result = publish(&staged, &output, names.iter(), std::iter::empty());
         assert!(
             matches!(result, Err(crate::error::BuildError::Io(ref error)) if error.kind() == std::io::ErrorKind::NotFound)
         );
@@ -578,7 +736,7 @@ mod tests {
         let output = dir.path().join("existing");
         fs::create_dir(&output).unwrap();
         fs::write(output.join("keep"), b"unrelated").unwrap();
-        assert!(publish(dir.path(), &output, std::iter::empty()).is_err());
+        assert!(publish(dir.path(), &output, std::iter::empty(), std::iter::empty()).is_err());
         assert_eq!(fs::read(output.join("keep")).unwrap(), b"unrelated");
     }
 }

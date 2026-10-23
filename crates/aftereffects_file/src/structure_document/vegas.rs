@@ -312,7 +312,7 @@ fn neutral_input(
         }
         match layer {
             LayerData::Group(g)=>pending.extend(g.layers.iter().map(|child|child.data())),
-            LayerData::Rect(r) if r.rect.fill_paint.is_none() && (!r.rect.fill_enabled||r.rect.fill_color[0]==r.rect.fill_color[1]&&r.rect.fill_color[1]==r.rect.fill_color[2]) && (!r.rect.stroke_enabled||r.rect.stroke_color.is_some_and(|c|c[0]==c[1]&&c[1]==c[2]))=>{},
+            LayerData::Rect(r) if r.rect.fill_paint.is_none() && (!r.rect.fill_enabled||r.rect.fill_color.value().is_some_and(|c|c[0]==c[1]&&c[1]==c[2])) && (!r.rect.stroke_enabled||r.rect.stroke_color.as_ref().and_then(|c|c.value()).is_some_and(|c|c[0]==c[1]&&c[1]==c[2]))=>{},
             LayerData::Audio(_)=>{},
             _=>return Err("Vegas Intensity approximation requires structurally grayscale Rect/Group paint; media, arbitrary shaders and intrinsic colored text glyphs remain outside admitted profile".into()),
         }
@@ -740,7 +740,7 @@ mod tests {
                     let LayerData::Rect(r) = &mut rect else {
                         panic!()
                     };
-                    r.rect.fill_color = [1., 0., 0., 1.];
+                    r.rect.fill_color = [1., 0., 0., 1.].into();
                     g.layers[0] = fx_schema::Layer::from_data(&rect).unwrap();
                     owner.layers[0] = fx_schema::Layer::from_data(&data).unwrap();
                 }

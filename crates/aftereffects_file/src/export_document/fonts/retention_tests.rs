@@ -109,11 +109,11 @@ fn emitted_point_text_holds_and_constant_size_retain_native_source_text() {
     let native = crate::structure::read_project(&output.bytes).unwrap();
     let imported = crate::structure_document::to_structural_fx_document(&native, Some(1)).unwrap();
     let texts = text_layers(imported.document.composition().layers());
-    assert!(texts.iter().any(|text| text.source_text.text.is_empty()));
+    assert!(texts.iter().any(|text| text.source_text.text == ""));
     assert!(texts.iter().any(|text| {
         text.source_text.text == "KEEP"
-            && text.source_text.font_size.value() == 84.0
-            && text.source_text.font_family.as_ref() == "Arial"
+            && text.source_text.font_size.number() == Some(84.0)
+            && text.source_text.font_family == "Arial"
             && text.source_text.font_style.as_ref() == "BoldMT"
     }));
     assert!(has_layer(

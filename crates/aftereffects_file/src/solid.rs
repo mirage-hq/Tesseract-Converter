@@ -14,7 +14,8 @@ pub struct SolidSource {
     pub height: u16,
     /// Big-endian pixel-aspect fraction from `Pin /sspc`.
     pub pixel_aspect: (u32, u32),
-    /// Straight RGB components in the AE source's 0..=1 range, from `Pin /opti`.
+    /// Straight nonnegative RGB components from `Pin /opti`: 0..=1, or above 1.0
+    /// for a 32 bpc super-white. Paint consumers must check the range.
     pub color: [f32; 3],
 }
 
@@ -76,7 +77,7 @@ pub(super) fn decode(pin: &Chunk) -> Result<SolidSource, SolidDecodeError> {
     });
     if color
         .iter()
-        .any(|component| !component.is_finite() || !(0.0..=1.0).contains(component))
+        .any(|component| !component.is_finite() || *component < 0.0)
     {
         return Err(SolidDecodeError::Invalid("color"));
     }
@@ -136,6 +137,41 @@ mod tests {
         assert_eq!((solid.width, solid.height), (1920, 1080));
         assert_eq!(solid.pixel_aspect, (1, 1));
         assert_eq!(solid.color, [0.25, 0.5, 0.75]);
+    }
+
+    fn revision_nine_solid(color: [f32; 3]) -> Chunk {
+        let mut opti = vec![0; 282];
+        opti[..4].copy_from_slice(b"Soli");
+        opti[4..6].copy_from_slice(&9u16.to_be_bytes());
+        for (offset, value) in [14, 18, 22].into_iter().zip(color) {
+            opti[offset..offset + 4].copy_from_slice(&value.to_be_bytes());
+        }
+        let mut sspc = vec![0; 144];
+        sspc[22..26].copy_from_slice(b"Soli");
+        sspc[32..34].copy_from_slice(&100u16.to_be_bytes());
+        sspc[36..38].copy_from_slice(&50u16.to_be_bytes());
+        sspc[136..140].copy_from_slice(&1u32.to_be_bytes());
+        sspc[140..144].copy_from_slice(&1u32.to_be_bytes());
+        Chunk::list(
+            *b"Pin ",
+            vec![
+                Chunk::data(*b"opti", opti).unwrap(),
+                Chunk::data(*b"sspc", sspc).unwrap(),
+            ],
+        )
+    }
+
+    #[test]
+    fn decodes_super_white_and_rejects_negative_solid_colors() {
+        // 32 bpc projects store super-white components above 1.0; the geometry
+        // stays usable and paint consumers decide what the colour means.
+        let solid = decode(&revision_nine_solid([2.0, 2.0, 2.0])).unwrap();
+        assert_eq!(solid.color, [2.0, 2.0, 2.0]);
+        assert_eq!((solid.width, solid.height), (100, 50));
+        assert_eq!(
+            decode(&revision_nine_solid([0.5, -0.1, 0.5])),
+            Err(SolidDecodeError::Invalid("color"))
+        );
     }
 
     #[test]

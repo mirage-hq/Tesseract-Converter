@@ -105,7 +105,7 @@ fn text_contents(layers: &[Layer]) -> Vec<String> {
     layers
         .iter()
         .flat_map(|layer| match layer.data() {
-            LayerData::Text(text) => vec![text.source_text.text.clone()],
+            LayerData::Text(text) => text.source_text.text.value().cloned().into_iter().collect(),
             LayerData::Group(group) => text_contents(&group.layers),
             _ => Vec::new(),
         })

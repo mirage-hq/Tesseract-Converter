@@ -200,7 +200,7 @@ fn paired_rect_miter_and_geometry_keys_keep_rect_and_group_ownership() {
     assert_eq!(rect.rect.size, [100.0, 50.0]);
     assert!(rect.rect.fill_enabled && rect.rect.stroke_enabled);
     assert_eq!(rect.rect.fill_color, [1.0, 0.0, 0.0, 1.0]);
-    assert_eq!(rect.rect.stroke_color, Some([0.0, 0.0, 1.0, 1.0]));
+    assert_eq!(rect.rect.stroke_color, Some([0.0, 0.0, 1.0, 1.0].into()));
     for property in [
         PropType::PositionX,
         PropType::PositionY,
@@ -269,7 +269,7 @@ fn paired_rect_miter_and_geometry_keys_keep_rect_and_group_ownership() {
     assert_eq!(child.parent, Some(group.id));
     assert_eq!(child.transform.opacity.value(), 100.0);
     assert_eq!(child.rect.fill_color, [1.0, 0.0, 0.0, 1.0]);
-    assert_eq!(child.rect.stroke_color, Some([0.0, 0.0, 1.0, 1.0]));
+    assert_eq!(child.rect.stroke_color, Some([0.0, 0.0, 1.0, 1.0].into()));
     for property in [PropType::ScaleX, PropType::ScaleY] {
         assert!(
             collector

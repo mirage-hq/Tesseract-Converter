@@ -1,0 +1,115 @@
+{
+ "build": 89,
+ "colour": {
+  "bitsPerChannel": 8,
+  "colorManagementSystem": 0,
+  "linearBlending": false,
+  "linearizeWorkingSpace": false,
+  "lutInterpolationMethod": 1,
+  "ocioConfigurationFile": "ACES 1.2",
+  "workingSpace": "None"
+ },
+ "compositions": [
+  {
+   "duration": 2.002002002002,
+   "frameRate": 29.9700012207031,
+   "height": 1080,
+   "id": 2,
+   "name": "chart",
+   "numLayers": 1,
+   "width": 1920
+  }
+ ],
+ "effects": [
+  {
+   "composition": "chart",
+   "compositionId": 2,
+   "enabled": true,
+   "layerId": 14,
+   "layerName": "chart.png",
+   "matchName": "ADBE Apply Color LUT2",
+   "name": "Apply Color LUT",
+   "properties": [
+    {
+     "canVaryOverTime": false,
+     "index": 1,
+     "isDropdownEffect": false,
+     "matchName": "ADBE Apply Color LUT2-0001",
+     "name": "<LUT not set>",
+     "numKeys": 0,
+     "type": "6412",
+     "value": null,
+     "valueError": "Error: After Effects error: Can not get or set a value from this property (matchname is “ADBE Apply Color LUT2-0001”). This property’s propertyValueType is PropertyValueType.NO_VALUE."
+    },
+    {
+     "canVaryOverTime": false,
+     "index": 2,
+     "isDropdownEffect": false,
+     "matchName": "ADBE Apply Color LUT2-0002",
+     "name": "",
+     "numKeys": 0,
+     "type": "6412",
+     "value": null,
+     "valueError": "Error: After Effects error: Can not get or set a value from this property (matchname is “ADBE Apply Color LUT2-0002”). This property’s propertyValueType is PropertyValueType.NO_VALUE."
+    },
+    {
+     "canVaryOverTime": null,
+     "index": 3,
+     "matchName": "ADBE Effect Built In Params",
+     "name": "Compositing Options",
+     "properties": [
+      {
+       "canVaryOverTime": null,
+       "index": 1,
+       "matchName": "ADBE Effect Mask Parade",
+       "name": "Masks",
+       "properties": [],
+       "type": "undefined"
+      },
+      {
+       "canVaryOverTime": true,
+       "index": 2,
+       "isDropdownEffect": false,
+       "matchName": "ADBE Effect Mask Opacity",
+       "max": 100,
+       "min": 0,
+       "name": "Effect Opacity",
+       "numKeys": 0,
+       "type": "6417",
+       "value": 100
+      },
+      {
+       "canVaryOverTime": false,
+       "index": 3,
+       "isDropdownEffect": false,
+       "matchName": "ADBE Force CPU GPU",
+       "max": 3,
+       "min": 1,
+       "name": "GPU Rendering",
+       "numKeys": 0,
+       "type": "6417",
+       "value": 1
+      }
+     ],
+     "type": "undefined"
+    }
+   ]
+  }
+ ],
+ "footage": [
+  {
+   "id": 1,
+   "missing": false,
+   "name": "chart.png"
+  }
+ ],
+ "footage_note": "footage file paths removed (host paths); the chart footage read back online (missing false)",
+ "source": {
+  "adobe_queue_job": 10954,
+  "operation": "headless-adobe run_jsx (After Effects, output_kind json)",
+  "path": "color_ae_apply_color_lut.aep (human-saved bytes)",
+  "request_id": "l-w5-ae-readback-native-apply-color-lut-v1",
+  "sha256": "a180f7621526bb05ad1ed6df771ea6a513fd61841e450709a9102f6a3a343806"
+ },
+ "version": "26.5x89"
+}

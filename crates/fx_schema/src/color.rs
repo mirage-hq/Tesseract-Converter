@@ -307,7 +307,7 @@ impl PersistedInputTransform {
     pub(crate) fn from_persisted_value(
         payload: serde_json::Value,
     ) -> Result<Self, serde_json::Error> {
-        if has_unsupported_color_semantics(&payload) {
+        if has_unsupported_input_transform_semantics(&payload) {
             return Ok(Self(PersistedInputTransformValue::Unsupported(payload)));
         }
         serde_json::from_value(payload).map(Self::supported)
@@ -332,9 +332,23 @@ impl Serialize for PersistedInputTransform {
     }
 }
 
-/// Whether a persisted semantic payload belongs to a future, well-discriminated
-/// contract rather than being malformed v1 data.
+/// Whether a persisted Look Transform payload belongs to a future,
+/// well-discriminated contract rather than being malformed v1 data.
+/// Looks are LUT-only.
 pub fn has_unsupported_color_semantics(payload: &serde_json::Value) -> bool {
+    has_unsupported_semantics_for_transform_types(payload, &["lut3d"])
+}
+
+/// [`has_unsupported_color_semantics`] for a persisted Input Transform, which
+/// also supports the LUT-less `cameraInput` declaration.
+pub fn has_unsupported_input_transform_semantics(payload: &serde_json::Value) -> bool {
+    has_unsupported_semantics_for_transform_types(payload, &["lut3d", "cameraInput"])
+}
+
+fn has_unsupported_semantics_for_transform_types(
+    payload: &serde_json::Value,
+    supported_transform_types: &[&str],
+) -> bool {
     payload
         .get("semanticVersion")
         .and_then(serde_json::Value::as_u64)
@@ -342,7 +356,7 @@ pub fn has_unsupported_color_semantics(payload: &serde_json::Value) -> bool {
         || payload
             .pointer("/transform/type")
             .and_then(serde_json::Value::as_str)
-            .is_some_and(|transform_type| transform_type != "lut3d")
+            .is_some_and(|transform_type| !supported_transform_types.contains(&transform_type))
         || payload
             .pointer("/transform/interpolation")
             .and_then(serde_json::Value::as_str)

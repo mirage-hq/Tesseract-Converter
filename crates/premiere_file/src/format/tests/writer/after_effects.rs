@@ -405,8 +405,8 @@ fn hdr_sequence_target_roundtrip_requires_agreement_without_retagging_sources() 
             xml.replace(
                 settings_xml,
                 &settings_xml.replace(
-                    "\"graphicsWhiteLuminance\":203.0",
-                    "\"graphicsWhiteLuminance\":300.0",
+                    "\"graphicsWhiteLuminance\":203",
+                    "\"graphicsWhiteLuminance\":300",
                 ),
             ),
             xml.replace(
@@ -418,8 +418,8 @@ fn hdr_sequence_target_roundtrip_requires_agreement_without_retagging_sources() 
                 "\"workingSpaceIsLinearized\":1",
             ),
             xml.replace(
-                "\"graphicsWhiteLuminance\":203.0",
-                "\"graphicsWhiteLuminance\":99.0",
+                "\"graphicsWhiteLuminance\":203",
+                "\"graphicsWhiteLuminance\":99",
             ),
         ] {
             assert_ne!(modified, xml);

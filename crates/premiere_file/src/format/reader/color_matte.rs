@@ -219,6 +219,8 @@ fn solid_media(
             width,
             height,
             kind: PrMediaKind::ColorMatte(matte),
+            input_lut: None,
+            camera_override: None,
         }),
         audio: None,
     })

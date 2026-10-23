@@ -79,8 +79,35 @@ pub enum VerticalAlign {
     Bottom,
 }
 
-/// Which part of the type meets the guide curve on a text-on-path layer
-/// (JRB-1819).
+/// How box text fits its box.
+///
+/// Only meaningful when [`TextDocument::box_text`](super::TextDocument::box_text) is set; point
+/// text ignores it, like [`VerticalAlign`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "project_types.d.ts")]
+pub enum BoxFit {
+    /// Draw at `fontSize`; lines that do not fit spill out of the box.
+    #[default]
+    None,
+    /// Draw at the largest size, at most `fontSize`, whose lines fit the box
+    /// in both width and height, re-wrapping at each size. Leading and text
+    /// stroke width shrink with it. The lines are placed as one block per
+    /// `verticalAlign` (absent = top), and `boxFirstBaseline` is ignored.
+    Shrink,
+}
+
+impl BoxFit {
+    /// Whether this is the default, for `skip_serializing_if` — see
+    /// [`crate::TextPathOptions::align`] for why omitting the default matters
+    /// to downstream readers.
+    #[must_use]
+    pub fn is_default(&self) -> bool {
+        matches!(self, Self::None)
+    }
+}
+
+/// Which part of the type meets the guide curve on a text-on-path layer.
 ///
 /// All three are measured on the cap band, so [`Self::Bottom`] *is*
 /// baseline-on-curve — which is why there is no separate `Baseline` variant.

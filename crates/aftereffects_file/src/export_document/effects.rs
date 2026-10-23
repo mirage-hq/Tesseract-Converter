@@ -7,7 +7,11 @@ use fx_schema::{EffectData, EffectId, EffectPayload, EffectRecord, PropertyTarge
 
 use super::{NativeTrack, scalar_track};
 use crate::{
-    effects::{catalog, mapping, special},
+    effects::{
+        catalog,
+        color_grades::{self, ColorGradeDomain},
+        mapping, special,
+    },
     writer::{self, KeyframeEasing, NumericKeyframe, NumericTrack},
 };
 
@@ -52,6 +56,10 @@ pub(super) fn unmapped_warning(record: &EffectRecord) -> Option<String> {
         ));
     }
     let kind = catalog::effect_type(effect);
+    if let fx_schema::LayerEffect::LookTransform { .. } = effect {
+        return super::apply_color_lut::unexportable_reason(effect)
+            .map(|reason| format!("Effect {kind}: {reason}; omitted, owner retained"));
+    }
     if super::layer_styles::is_layer_style(effect) || mapping::by_fx(kind).is_some() {
         return None;
     }
@@ -68,8 +76,9 @@ pub(super) fn lower_at_rate(
     dynamics: &[AnimationGraphEntry],
     size: [f64; 2],
     rate: crate::timing::FrameRate,
+    grade_domain: ColorGradeDomain,
 ) -> LoweredEffects {
-    lower_at_rate_with_mosaic_domain(records, dynamics, size, rate, None)
+    lower_at_rate_with_mosaic_domain(records, dynamics, size, rate, None, grade_domain)
 }
 
 pub(super) fn lower_at_rate_with_mosaic_domain(
@@ -78,8 +87,9 @@ pub(super) fn lower_at_rate_with_mosaic_domain(
     size: [f64; 2],
     rate: crate::timing::FrameRate,
     mosaic_domain: Option<&super::mosaic_domain::MosaicDomain>,
+    grade_domain: ColorGradeDomain,
 ) -> LoweredEffects {
-    let mut result = lower_with_rate(records, dynamics, size, rate, mosaic_domain);
+    let mut result = lower_with_rate(records, dynamics, size, rate, mosaic_domain, grade_domain);
     validate_color_clocks(&mut result, rate);
     result
 }
@@ -122,6 +132,7 @@ pub(super) fn lower(
         size,
         crate::timing::FrameRate::new(24.0).expect("constant 24fps is a valid native frame rate"),
         None,
+        ColorGradeDomain::Legacy,
     )
 }
 
@@ -131,6 +142,7 @@ fn lower_with_rate(
     size: [f64; 2],
     rate: crate::timing::FrameRate,
     mosaic_domain: Option<&super::mosaic_domain::MosaicDomain>,
+    grade_domain: ColorGradeDomain,
 ) -> LoweredEffects {
     let mut result = LoweredEffects {
         effects: Vec::new(),
@@ -139,14 +151,15 @@ fn lower_with_rate(
     };
     let mut last_style_rank = None;
     for record in records {
-        let (id, enabled, payload) = match record.data() {
+        let (id, enabled, payload, compositing) = match record.data() {
             EffectData::Identified {
                 id,
                 enabled,
                 effect,
+                compositing_options,
                 ..
-            } => (Some(*id), *enabled, effect),
-            EffectData::Legacy(effect) => (None, true, effect),
+            } => (Some(*id), *enabled, effect, compositing_options.as_ref()),
+            EffectData::Legacy(effect) => (None, true, effect, None),
         };
         let EffectPayload::Known(effect) = payload else {
             result.warnings.push(
@@ -161,6 +174,7 @@ fn lower_with_rate(
             continue;
         }
         let kind = catalog::effect_type(effect);
+        let compositing = compositing.filter(|options| !options.is_neutral());
         let frequency = match effect {
             fx_schema::LayerEffect::Ripple { frequency, .. } => Some(frequency.unwrap_or(30.0)),
             fx_schema::LayerEffect::WaveWarp { wave_width, .. } => Some(wave_width.unwrap_or(6.0)),
@@ -176,6 +190,11 @@ fn lower_with_rate(
             continue;
         }
         if super::layer_styles::is_layer_style(effect) {
+            if compositing.is_some() {
+                result.warnings.push(format!(
+                    "Effect {kind}: compositingOptions omitted: native Layer Styles have no Effect Opacity or effect mask references; the style applies at full strength over the whole layer"
+                ));
+            }
             let key = super::layer_styles::style_key(effect);
             let duplicate = result.styles.iter().any(|style| {
                 matches!(
@@ -232,8 +251,42 @@ fn lower_with_rate(
             result.warnings.extend(lowered.warnings);
             continue;
         }
-        let mappings = animated_saturation_mapping(effect, id, dynamics)
-            .map_or_else(|| mapping::export_mappings(kind), |mapping| vec![mapping]);
+        if let fx_schema::LayerEffect::LookTransform { .. } = effect {
+            match super::apply_color_lut::lower(effect, enabled) {
+                Ok((mut native, notes)) => {
+                    if let Some(options) = compositing {
+                        let (lowered, warnings) = native_compositing(effect, options, 1);
+                        result.warnings.extend(
+                            warnings
+                                .into_iter()
+                                .map(|warning| format!("Effect {kind}: {warning}")),
+                        );
+                        if let Some(mut lowered) = lowered {
+                            lowered.effect_opacity_percent *=
+                                native.compositing.effect_opacity_percent / 100.0;
+                            native.compositing = lowered;
+                        }
+                    }
+                    result.warnings.extend(
+                        notes
+                            .into_iter()
+                            .map(|note| format!("Effect {kind}: {note}")),
+                    );
+                    result.effects.push(native);
+                }
+                Err(reason) => result
+                    .warnings
+                    .push(format!("Effect {kind}: {reason}; omitted, owner retained")),
+            }
+            continue;
+        }
+        let mappings = animated_saturation_mapping(effect, id, dynamics).map_or_else(
+            || match color_grades::export_mapping_in(kind, grade_domain) {
+                Some(grade) => vec![grade],
+                None => mapping::export_mappings(kind),
+            },
+            |mapping| vec![mapping],
+        );
         if mappings.is_empty() {
             result.warnings.push(format!(
                 "Effect {kind}: {}; omitted, owner retained",
@@ -242,6 +295,15 @@ fn lower_with_rate(
             ));
             continue;
         }
+        let native_compositing = compositing.and_then(|options| {
+            let (native, warnings) = native_compositing(effect, options, mappings.len());
+            result.warnings.extend(
+                warnings
+                    .into_iter()
+                    .map(|warning| format!("Effect {kind}: {warning}")),
+            );
+            native
+        });
         for mapping in &mappings {
             let mut native = match writer::effects::new_effect(mapping.native, enabled, size) {
                 Ok(effect) => effect,
@@ -282,10 +344,9 @@ fn lower_with_rate(
                     ));
                         continue;
                     };
-                    let base = value
-                        .get(field.field)
+                    let base = json_field(&value, field.field)
                         .filter(|v| !v.is_null())
-                        .or_else(|| defaults.get(field.field));
+                        .or_else(|| json_field(&defaults, field.field));
                     let base = base.and_then(|v| {
                         v.as_f64()
                             .or_else(|| v.as_bool().map(|b| f64::from(u8::from(b))))
@@ -318,18 +379,6 @@ fn lower_with_rate(
                     let Some(id) = id else {
                         continue;
                     };
-                    if kind == "vignette"
-                        && dynamics.iter().any(|entry| {
-                            matches!(&entry.target, PropertyTarget::EffectProperty(target)
-                            if target.effect_id() == id && target.param_name() == field.param)
-                        })
-                    {
-                        result.warnings.push(format!(
-                        "Effect {kind} / {}: animated CC Vignette export unsupported: Adobe continuous rendering freezes keyed controls; animation omitted, authored base retained as a static native control",
-                        field.param
-                    ));
-                        continue;
-                    }
                     match parameter_track_with_alias(
                         dynamics,
                         id,
@@ -398,13 +447,17 @@ fn lower_with_rate(
                     ));
                     }
                     Ok(Some(track)) => {
-                        if kind == "hueSaturation"
-                            && mapping.native == "ADBE Vibrance"
+                        if ((kind == "hueSaturation" && mapping.native == "ADBE Vibrance")
+                            || mapping.native == color_grades::LUMETRI)
                             && let Err(error) = writer::validate_effect_float_at_rate(&track, rate)
                         {
                             result.warnings.push(format!(
-                                "Effect {kind} / saturation ({}): {error}; animation omitted, authored static property and owner retained",
-                                property.match_name
+                                "Effect {kind} / {}: {error}; animation omitted, authored static property and owner retained",
+                                if kind == "hueSaturation" {
+                                    format!("saturation ({})", property.match_name)
+                                } else {
+                                    property.match_name.clone()
+                                }
                             ));
                         } else {
                             property.animation = Some(track);
@@ -419,6 +472,11 @@ fn lower_with_rate(
             }
             result.warnings.extend(
                 special::export(effect, size, &mut native)
+                    .into_iter()
+                    .map(|warning| format!("Effect {kind}: {warning}")),
+            );
+            result.warnings.extend(
+                color_grades::export(effect, mapping, &mut native)
                     .into_iter()
                     .map(|warning| format!("Effect {kind}: {warning}")),
             );
@@ -452,6 +510,9 @@ fn lower_with_rate(
                 result.warnings.push(format!("Effect {kind}: {note}"));
             }
             clamp_extended_generator_colors(kind, &mut native, &mut result.warnings);
+            if let Some(compositing) = &native_compositing {
+                native.compositing = compositing.clone();
+            }
             result.effects.push(native);
         }
     }
@@ -462,6 +523,59 @@ fn lower_with_rate(
 }
 
 /// Keep native generator colors normalized without silently losing FX headroom.
+/// Dotted paths address nested canonical payload fields such as `red.green`.
+fn json_field<'a>(value: &'a serde_json::Value, path: &str) -> Option<&'a serde_json::Value> {
+    path.split('.')
+        .try_fold(value, |value, part| value.get(part))
+}
+
+/// Lower FX `compositingOptions` to native Compositing Options for an effect
+/// written as `native_count` native instances.
+///
+/// Effect Opacity becomes the native percentage. Mask references stay FX
+/// identities here: the owner's native masks are lowered later, and
+/// `effect_masks::bind` resolves each to its native mask identity or
+/// diagnoses it. Forbidden classes, multi-instance lowerings and the HSL
+/// qualifier (AE has none outside Lumetri's opaque HSL Secondary) are
+/// diagnosed omissions.
+fn native_compositing(
+    effect: &fx_schema::LayerEffect,
+    options: &fx_schema::effect::EffectCompositingOptions,
+    native_count: usize,
+) -> (
+    Option<writer::effects::NativeEffectCompositing>,
+    Vec<String>,
+) {
+    let mut warnings = Vec::new();
+    let class = effect.compositing_class();
+    if !class.allows_compositing() {
+        warnings.push(format!(
+            "compositingOptions rejected: FX {class:?}-class effects forbid Effect Opacity and effect mask references; the effect is written at full strength over the whole layer"
+        ));
+        return (None, warnings);
+    }
+    if options.qualifier.is_some() {
+        warnings.push("compositingOptions HSL qualifier omitted: AE has no native HSL qualifier outside Lumetri's opaque HSL Secondary; the effect applies to every hue/saturation/luminance".into());
+    }
+    let opacity = options.effect_opacity.value();
+    if native_count != 1 {
+        if opacity != 1.0 || !options.mask_references.is_empty() {
+            warnings.push(format!(
+                "compositingOptions (Effect Opacity {opacity}, {} effect mask reference(s)) omitted: the effect lowers to {native_count} native effects and one blend/restriction is not representable per native effect; the effects are written at full strength over the whole layer",
+                options.mask_references.len()
+            ));
+        }
+        return (None, warnings);
+    }
+    let native = writer::effects::NativeEffectCompositing {
+        effect_opacity_percent: opacity * 100.0,
+        mask_identities: Vec::new(),
+        unresolved_mask_references: options.mask_references.clone(),
+    };
+    let neutral = native == writer::effects::NativeEffectCompositing::default();
+    ((!neutral).then_some(native), warnings)
+}
+
 fn clamp_extended_generator_colors(
     kind: &str,
     native: &mut writer::effects::NativeEffect,
@@ -1180,5 +1294,46 @@ mod tests {
         .unwrap()
         .unwrap();
         assert!((result.keys[1].values[0] - 5.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn native_compositing_writes_percent_and_rejects_forbidden_classes_and_split_lowerings() {
+        use fx_schema::effect::{EffectCompositingOptions, UnitInterval};
+        let options = EffectCompositingOptions {
+            mask_references: vec![fx_schema::FxItemId::new(77)],
+            effect_opacity: UnitInterval::new(0.5).unwrap(),
+            qualifier: None,
+        };
+        let grade = fx_schema::LayerEffect::PrimaryGrade(Default::default());
+        let (native, warnings) = super::native_compositing(&grade, &options, 1);
+        let native = native.unwrap();
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(native.effect_opacity_percent, 50.0);
+        assert!(native.mask_identities.is_empty());
+        assert_eq!(
+            native.unresolved_mask_references,
+            [fx_schema::FxItemId::new(77)]
+        );
+        // Matte, temporal and opaque classes forbid masks and opacity.
+        for forbidden in [
+            fx_schema::LayerEffect::SimpleChoker { choke: None },
+            fx_schema::LayerEffect::PosterizeTime {
+                frame_rate: Some(12.0),
+            },
+        ] {
+            let (native, warnings) = super::native_compositing(&forbidden, &options, 1);
+            assert!(native.is_none());
+            assert!(
+                warnings[0].contains("compositingOptions rejected"),
+                "{warnings:?}"
+            );
+        }
+        // One FX effect written as two native effects cannot share one blend.
+        let (native, warnings) = super::native_compositing(&grade, &options, 2);
+        assert!(native.is_none());
+        assert!(
+            warnings[0].contains("lowers to 2 native effects"),
+            "{warnings:?}"
+        );
     }
 }

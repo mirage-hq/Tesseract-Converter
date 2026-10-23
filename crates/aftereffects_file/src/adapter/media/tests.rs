@@ -77,6 +77,7 @@ fn folder(id: u32, name: &str, parent_folder: Option<u32>) -> crate::structure::
         solid: None,
         media: None,
         native_media: None,
+        ocio_input: None,
     }
 }
 
@@ -102,6 +103,7 @@ fn media_item(
         solid: None,
         media: Some(Ok(descriptor.clone())),
         native_media: Some(Ok(descriptor)),
+        ocio_input: None,
     }
 }
 
@@ -109,6 +111,7 @@ fn project(items: Vec<crate::structure::ProjectItem>) -> crate::structure::Struc
     crate::structure::StructuralProject {
         color: crate::structure::ProjectColorContext::Legacy,
         format_version: 0,
+        producer: crate::schema::ProducerVersion::default(),
         effect_definitions: Vec::new(),
         items,
     }

@@ -324,15 +324,10 @@ fn selected_picture_prunes_rgb_when_its_native_matte_owner_fails() {
     );
 }
 
-fn primary_grade_value() -> Value {
-    serde_json::to_value(fx_schema::LayerEffect::PrimaryGrade(
-        fx_schema::PrimaryGrade {
-            exposure: 1.0,
-            contrast: 0.5,
-            ..Default::default()
-        },
-    ))
-    .unwrap()
+/// A canonical effect with no native AE effect (edge-preserving noise
+/// reduction), so export omits it and retains the owner.
+fn unmapped_grade_value() -> Value {
+    json!({"type":"noiseReduction"})
 }
 
 #[cfg(feature = "ffmpeg-library")]
@@ -347,7 +342,7 @@ fn selected_picture_prepared_movie_pair_retains_bound_alpha_matte_and_unmapped_e
     matte["source"]["assetId"] = json!("matte");
     value["composition"]["layers"][0]["trackMatte"] = json!({"layer":901,"mode":"alpha"});
     value["composition"]["layers"][0]["effects"] = json!([
-        {"id":100,"enabled":true,"effect":primary_grade_value()},
+        {"id":100,"enabled":true,"effect":unmapped_grade_value()},
         {"id":101,"enabled":true,"effect":{
             "type":"exposure","exposure":0.5,"offset":0,"gammaCorrection":1
         }}
@@ -389,7 +384,7 @@ fn selected_picture_prepared_movie_pair_retains_bound_alpha_matte_and_unmapped_e
     assert!(stage.omitted_layer_ids().is_empty(), "{:?}", stage.report());
     assert!(stage.report().diagnostics.iter().any(|d| {
         d.layer_id == Some(LayerId::new(900))
-            && d.message.contains("Effect primaryGrade:")
+            && d.message.contains("Effect noiseReduction:")
             && d.message.contains("omitted, owner retained")
     }));
     assert_eq!(
@@ -539,9 +534,9 @@ const UNPREPARABLE_VIDEO: &[u8] = b"WebM bytes outside native AE admission";
 #[test]
 fn selected_picture_unmapped_effect_does_not_withhold_source_preparation() {
     for (effect, enabled, in_selected_scope) in [
-        (primary_grade_value(), true, true),
-        (primary_grade_value(), false, true),
-        (primary_grade_value(), true, false),
+        (unmapped_grade_value(), true, true),
+        (unmapped_grade_value(), false, true),
+        (unmapped_grade_value(), true, false),
         (
             json!({"type":"chromaticAberration", "amount":0.3, "direction":90}),
             true,
@@ -678,7 +673,7 @@ fn selected_picture_unmapped_effect_still_verifies_later_assets() {
         let parent = tempfile::tempdir().unwrap();
         let mut value = unmapped_shader_value(true, true);
         value["composition"]["layers"][0]["sourceIntrinsicDuration"] = json!(8000);
-        value["composition"]["layers"][0]["effects"][0]["effect"] = primary_grade_value();
+        value["composition"]["layers"][0]["effects"][0]["effect"] = unmapped_grade_value();
         let mut later = value["composition"]["layers"][0].clone();
         later["id"] = json!(901);
         later.as_object_mut().unwrap().remove("effects");

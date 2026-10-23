@@ -1,7 +1,7 @@
 //! Explicit generated-native colour bindings; never walks persisted/opaque FX JSON.
 
 use fx_conv::HdrColorBridge;
-use fx_schema::{LayerId, ShapePaint};
+use fx_schema::{LayerId, Linkable, ShapePaint};
 
 use super::{ExportDiagnostic, LayerSpec, VectorContent, VectorPaintSpec};
 use crate::{
@@ -37,7 +37,19 @@ fn color(
     diagnostics: &mut Vec<ExportDiagnostic>,
 ) {
     match bridge.to_native(*value) {
-        Ok(mapped) => *value = mapped,
+        Ok(mapped) => {
+            if mapped[..3].iter().any(|channel| *channel > 1.0) {
+                warn(
+                    owner,
+                    format!(
+                        "HDR point colour lies above the transfer's peak; written as 32 bpc super-white code values {:?} continuing the transfer linearly past the peak code 1.0 (the import's inverse). Output encoding of super-white headroom is the host's.",
+                        &mapped[..3]
+                    ),
+                    diagnostics,
+                );
+            }
+            *value = mapped;
+        }
         Err(error) => {
             // A point outside this bounded mapping must not silently pass through
             // as though FX coordinates already belonged to the target profile.
@@ -98,7 +110,12 @@ fn paint(
     diagnostics: &mut Vec<ExportDiagnostic>,
 ) {
     match paint {
-        ShapePaint::Solid { color: value } => color(value, owner, bridge, diagnostics),
+        ShapePaint::Solid {
+            color: Linkable::Value(value),
+        } => color(value, owner, bridge, diagnostics),
+        ShapePaint::Solid {
+            color: Linkable::Linked(_),
+        } => {}
         ShapePaint::Gradient { stops, .. } => {
             for stop in stops {
                 color(&mut stop.color, owner, bridge, diagnostics);
@@ -285,6 +302,20 @@ fn bind_layer(
             for key in &mut value.documents.keys {
                 color(&mut key.document.fill_color, owner, bridge, diagnostics);
                 optional(&mut key.document.stroke_color, owner, bridge, diagnostics);
+                for value in std::iter::once(&mut key.document.fill_color)
+                    .chain(key.document.stroke_color.as_mut())
+                {
+                    if value[..3].iter().any(|channel| *channel > 1.0) {
+                        value[..3]
+                            .iter_mut()
+                            .for_each(|channel| *channel = channel.min(1.0));
+                        warn(
+                            owner,
+                            "HDR Source Text colour above the transfer's peak clipped to the peak code 1.0: native Source Text colour stays in 0..=1.",
+                            diagnostics,
+                        );
+                    }
+                }
             }
             warn(
                 owner,

@@ -4211,6 +4211,7 @@ fn writer_encodes_graphics_inside_nested_sequences() {
         source.video.as_mut().unwrap().kind = crate::schema::PrMediaKind::Video {
             codec: Some(crate::schema::VideoCodec::H264),
             hdr_profile: None,
+            color_space_override: None,
         };
     }
     let project = crate::format::PrProjectFile::from_sequences(vec![outer], media);
@@ -7465,4 +7466,80 @@ fn nested_geometry2_unsupported_required_second_mask_conceals_only_its_occurrenc
     let document = project_document_with_media(outer, &project.media).to_string();
     assert_eq!(document.matches("\"type\":\"Video\"").count(), 1);
     assert!(!document.contains("Nested Geometry2 output coverage"));
+}
+
+/// "Outer" places, at 0–2 s, "Mid", which places "Empty", a sequence with
+/// no native members (a template drop zone), and a clip of `one-clip.xml`'s
+/// media at 3–5 s.
+fn template_placeholder_xml() -> String {
+    let window = Placement {
+        start: 0,
+        end: 2 * TICKS,
+        source_in: 0,
+    };
+    let mut records = sequence_records("outer", "Outer", 100, &[110, 130]);
+    records.push_str(&sequence_source(102, "mid"));
+    records.push_str(&placement_records(110, 102, &window));
+    records.push_str(&placement_records(
+        130,
+        7,
+        &Placement {
+            start: 3 * TICKS,
+            end: 5 * TICKS,
+            source_in: 0,
+        },
+    ));
+    records.push_str(&sequence_records("mid", "Mid", 140, &[150]));
+    records.push_str(&sequence_source(160, "empty"));
+    records.push_str(&placement_records(150, 160, &window));
+    records.push_str(&sequence_records("empty", "Empty", 200, &[]));
+    with_records(ONE_CLIP_XML, &records)
+}
+
+#[test]
+fn empty_template_placeholder_nest_imports_as_an_empty_group_through_an_intermediate_nest() {
+    let (project, omissions) =
+        inspect_project_with_omissions(&template_placeholder_xml(), Some("outer")).unwrap();
+    let outer = project.single_sequence().unwrap();
+    assert_eq!(outer.video_occurrences().count(), 1, "{omissions:?}");
+    let [mid] = outer.nest_occurrences().collect::<Vec<_>>()[..] else {
+        panic!("{omissions:?}");
+    };
+    assert!(!mid.sequence.empty_template_placeholder);
+    let [placeholder] = mid.sequence.nest_occurrences().collect::<Vec<_>>()[..] else {
+        panic!("{omissions:?}");
+    };
+    assert!(placeholder.sequence.empty_template_placeholder);
+    assert_eq!(placeholder.sequence.expanded_occurrence_count(), 0);
+    let reports: Vec<_> = omissions
+        .iter()
+        .filter(|omission| {
+            omission.reason.starts_with(
+                "empty template placeholder sequence \"Empty\" has no source occurrences",
+            )
+        })
+        .collect();
+    let [report] = reports[..] else {
+        panic!("{omissions:?}");
+    };
+    assert_eq!(report.record, "Sequence:empty");
+    assert!(
+        !omissions
+            .iter()
+            .any(|omission| omission.reason.contains("no convertible video")),
+        "{omissions:?}"
+    );
+
+    let document = project_document_with_media(outer, &project.media);
+    fn count(layers: &serde_json::Value, kind: &str) -> usize {
+        layers.as_array().map_or(0, |layers| {
+            layers
+                .iter()
+                .map(|layer| usize::from(layer["type"] == kind) + count(&layer["layers"], kind))
+                .sum()
+        })
+    }
+    let layers = &document["composition"]["layers"];
+    assert_eq!(count(layers, "Video"), 1, "{document}");
+    assert!(count(layers, "Group") >= 2, "{document}");
 }

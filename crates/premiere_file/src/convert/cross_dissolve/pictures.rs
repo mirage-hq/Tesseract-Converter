@@ -40,6 +40,8 @@ pub(super) fn prepare(
         fonts: context.fonts,
         audio: &mut audio,
         media_facts: context.media_facts,
+        input_luts: context.input_luts,
+        aces: context.aces,
         authored_video_durations: context.authored_video_durations,
         natural_frames: context.natural_frames,
         media,

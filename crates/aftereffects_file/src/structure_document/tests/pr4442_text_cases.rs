@@ -210,9 +210,9 @@ fn pr4442_native_point_and_box_text_keep_exact_whole_document_fields() {
         .iter()
         .find(|text| text.source_text.text == "Hello World\nSecond Paragraph\nEnd")
         .unwrap();
-    assert_eq!(point.source_text.font_family.as_ref(), "MyriadPro");
+    assert_eq!(point.source_text.font_family, "MyriadPro");
     assert_eq!(point.source_text.font_style.as_ref(), "Regular");
-    assert_eq!(point.source_text.font_size.value(), 72.0);
+    assert_eq!(point.source_text.font_size.number(), Some(72.0));
     assert_eq!(point.source_text.fill_color, [1.0, 0.0, 0.0, 1.0]);
     assert!(!point.source_text.box_text);
     assert_eq!(point.source_text.box_size, None);
@@ -363,7 +363,7 @@ fn pr4442_all_sixteen_animator_families_copy_exact_values_on_signed_segment_cloc
         let text = only_text(&converted);
         let animator = &text.animators[0];
         assert_eq!(text.source_text.text, "Editable motion\nSecond line");
-        assert_eq!(text.source_text.font_family.as_ref(), "ArialMT");
+        assert_eq!(text.source_text.font_family, "ArialMT");
         assert_track(
             graph_entry(
                 &converted,
@@ -480,7 +480,12 @@ fn pr4442_unsupported_text_semantics_are_diagnosed_without_losing_text_siblings(
     let mut texts = Vec::new();
     collect_text(root(&converted).layers.as_slice(), &mut texts);
     assert_eq!(texts.len(), 8);
-    assert!(texts.iter().all(|text| !text.source_text.text.is_empty()));
+    assert!(texts.iter().all(|text| {
+        text.source_text
+            .text
+            .value()
+            .is_some_and(|text| !text.is_empty())
+    }));
     assert!(
         converted
             .diagnostics
@@ -741,7 +746,7 @@ fn slider_percent_source_text_holds_each_native_slider_key() {
         .iter()
         .map(|text| {
             (
-                text.source_text.text.as_str(),
+                text.source_text.text.value().unwrap().as_str(),
                 text.active_range.start.as_millis(),
                 text.active_range.end().as_millis(),
             )
@@ -785,7 +790,7 @@ fn slider_percent_source_text_holds_each_native_slider_key() {
     assert_eq!(
         text_segments(&converted)
             .iter()
-            .map(|text| text.source_text.text.as_str())
+            .map(|text| text.source_text.text.value().unwrap().as_str())
             .collect::<Vec<_>>(),
         ["0%", "100%"]
     );
@@ -1041,14 +1046,18 @@ fn slider_percent_expansion_above_former_identifier_ceilings_is_admitted_whole()
         ),
         FIRST_ID,
     );
-    let (percent, others): (Vec<_>, Vec<_>) = text_segments(&expanded)
-        .into_iter()
-        .partition(|text| text.source_text.text.ends_with('%'));
+    let (percent, others): (Vec<_>, Vec<_>) =
+        text_segments(&expanded).into_iter().partition(|text| {
+            text.source_text
+                .text
+                .value()
+                .is_some_and(|text| text.ends_with('%'))
+        });
     let held: Vec<_> = percent
         .iter()
         .map(|text| {
             (
-                text.source_text.text.as_str(),
+                text.source_text.text.value().unwrap().as_str(),
                 text.active_range.start.as_millis(),
                 text.active_range.end().as_millis(),
             )
@@ -1234,7 +1243,7 @@ fn held_ranges(converted: &StructuralConversion) -> Vec<(String, u64, u64)> {
         .iter()
         .map(|text| {
             (
-                text.source_text.text.clone(),
+                text.source_text.text.value().unwrap().clone(),
                 text.active_range.start.as_millis(),
                 text.active_range.end().as_millis(),
             )
@@ -1249,7 +1258,7 @@ fn fx_shown_at(texts: &[fx_schema::TextLayer], frame: u32) -> Vec<String> {
     texts
         .iter()
         .filter(|text| text.active_range.start <= time && time < text.active_range.end())
-        .map(|text| text.source_text.text.clone())
+        .map(|text| text.source_text.text.value().unwrap().clone())
         .collect()
 }
 

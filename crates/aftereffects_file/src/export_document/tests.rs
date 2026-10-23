@@ -8,6 +8,7 @@ mod animated_direction;
 mod audio;
 mod bframe_presentation;
 mod boolean_geometry;
+mod color_grades;
 mod core_native_panel;
 mod directional_plane;
 mod effectful_vector_groups;
@@ -94,8 +95,10 @@ pub(super) fn rect(value: &Value, id: u64) -> Value {
     rect
 }
 
+/// An FX ACES document exports as an OCIO ACES 2.0 project (32 bpc, ACES 2.0
+/// Studio config, ACEScg working colour space) that imports back as ACES.
 #[test]
-fn color_management_aces_export_is_explicitly_unsupported() {
+fn color_management_aces_exports_an_ocio_aces_project() {
     let mut value = imported();
     assert_eq!(
         value["colorManagement"],
@@ -105,17 +108,20 @@ fn color_management_aces_export_is_explicitly_unsupported() {
         value["colorManagement"] =
             json!({"workingSpace":"acescct","outputTransform":"aces2.0","compositing":compositing});
         let document = EditableFxCompositionDocument::from_json_value(value.clone()).unwrap();
-        let error = to_aep(&document)
-            .err()
-            .expect("ACES must not be exported as legacy");
-        assert!(
-            error
-                .to_string()
-                .contains("acescct color management cannot be exported")
-        );
+        let exported = to_aep(&document).unwrap();
+        let project = crate::aep::Project::parse(&exported.bytes).unwrap();
         assert_eq!(
-            document.to_json_value().unwrap()["colorManagement"],
-            value["colorManagement"]
+            crate::ocio::import_context(&project),
+            Some(crate::structure::ProjectColorContext::Aces {
+                config: "ACES 2.0 Studio v4.0".into()
+            })
+        );
+        assert!(
+            exported.diagnostics.iter().any(|diagnostic| diagnostic
+                .message
+                .starts_with("FX ACES document exported as an OCIO colour-managed 32 bpc project")),
+            "{:?}",
+            exported.diagnostics
         );
     }
 }
@@ -345,7 +351,7 @@ fn edited_isolated_native_rectangle_exports_as_fresh_shape_not_solid() {
     assert_eq!(mapped.rect.size, [120.0, 60.0]);
     assert_eq!(mapped.rect.roundness, 8.0);
     assert_eq!(mapped.transform.position, Position::TwoD([63.0, 26.0]));
-    assert_eq!(mapped.rect.stroke_color, Some([0.2, 0.3, 0.4, 1.0]));
+    assert_eq!(mapped.rect.stroke_color, Some([0.2, 0.3, 0.4, 1.0].into()));
 }
 
 #[test]

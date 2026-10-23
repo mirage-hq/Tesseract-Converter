@@ -174,7 +174,7 @@ pub(super) fn materialize(
             let fills = if layer.rect.fill_enabled || fill_control.is_some() {
                 vec![ShapeFillStyle {
                     paint: layer.rect.fill_paint.clone().unwrap_or(ShapePaint::Solid {
-                        color: layer.rect.fill_color,
+                        color: layer.rect.fill_color.clone(),
                     }),
                     fill_rule: ShapeFillRule::NonZeroWinding,
                     blend_mode: layer.rect.fill_blend_mode.unwrap_or_default(),
@@ -183,11 +183,13 @@ pub(super) fn materialize(
             } else {
                 Vec::new()
             };
-            let strokes = match layer.rect.stroke_color {
+            let strokes = match &layer.rect.stroke_color {
                 Some(color) if layer.rect.stroke_enabled || stroke_control.is_some() => {
                     vec![ShapeStrokeStyle {
                         enabled: true,
-                        paint: ShapePaint::Solid { color },
+                        paint: ShapePaint::Solid {
+                            color: color.clone(),
+                        },
                         width: layer.rect.stroke_width,
                         cap: ShapeLineCap::Butt,
                         join: layer.rect.stroke_join,
@@ -366,7 +368,7 @@ fn bool_value(value: &PropertyValue) -> Result<bool, &'static str> {
 fn default_fill() -> ShapeFillStyle {
     ShapeFillStyle {
         paint: ShapePaint::Solid {
-            color: [1.0, 1.0, 1.0, 1.0],
+            color: [1.0, 1.0, 1.0, 1.0].into(),
         },
         fill_rule: ShapeFillRule::default(),
         blend_mode: BlendMode::default(),
@@ -378,7 +380,7 @@ fn default_stroke() -> ShapeStrokeStyle {
     ShapeStrokeStyle {
         enabled: true,
         paint: ShapePaint::Solid {
-            color: [0.0, 0.0, 0.0, 1.0],
+            color: [0.0, 0.0, 0.0, 1.0].into(),
         },
         width: NonNegativeProperty::new(1.0).expect("1.0 is finite and non-negative"),
         cap: ShapeLineCap::default(),

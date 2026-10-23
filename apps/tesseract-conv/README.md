@@ -82,7 +82,13 @@ options. `--media-relink` is a conversion option, not an inspection option.
 | Linked AEP inside Premiere | Sequence rate | Exact 24, 25, 30, 50, 60. |
 
 At fractional Premiere rates, automatic routing retains native Premiere output
-with diagnostics instead of changing cadence for a linked AEP. `--fps` is
+with diagnostics instead of changing cadence for a linked AEP. At every rate,
+including exact 24/25/30/50/60, an FX `primaryGrade` or `vignette` alone no
+longer makes a linked AEP: the graded picture stays a native Lumetri Color in
+the `.prproj` (its scale approximations are diagnostics, not routing losses);
+clamps, keys and other picture losses still route. See the Lumetri Color
+section of [`docs/formats/premiere.md`](../../docs/formats/premiere.md) for
+which forms Adobe has opened. `--fps` is
 rejected on import; the original Adobe rate is not automatically restored from FX.
 
 ## Timeline and media handling

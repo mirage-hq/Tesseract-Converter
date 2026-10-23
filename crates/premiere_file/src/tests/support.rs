@@ -190,11 +190,14 @@ pub(crate) fn video_media() -> BTreeMap<MediaId, PrMedia> {
                 kind: crate::schema::PrMediaKind::Video {
                     codec: None,
                     hdr_profile: None,
+                    color_space_override: None,
                 },
                 intrinsic_ticks: 10 * TICKS,
                 frame_rate: (FrameRate::Fps30).into(),
                 width: 1920,
                 height: 1080,
+                input_lut: None,
+                camera_override: None,
             }),
             audio: None,
         },
@@ -301,6 +304,7 @@ pub(crate) fn video_sequence() -> PrSequence {
     use crate::{format::FrameRate, schema::TICKS};
     PrSequence {
         hdr: None,
+        aces: None,
         native_frame_ticks: None,
         id: None,
         name: "Main".into(),
@@ -340,6 +344,7 @@ pub(crate) fn video_sequence() -> PrSequence {
         }],
         timeline_end_ticks: 5 * TICKS,
         adjustment_only_template: false,
+        empty_template_placeholder: false,
     }
 }
 

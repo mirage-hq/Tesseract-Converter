@@ -2,12 +2,16 @@
 mod adjustment;
 mod audio;
 mod captions;
+mod color_aces;
+mod color_fixtures;
+mod color_lumetri_lut;
 mod color_matte;
 mod crop;
 mod effects;
 mod film_impact_pop;
 mod frame_hold;
 mod graphics;
+mod hdr_document;
 mod linear_wipe;
 mod mask;
 mod merged;
@@ -28,6 +32,7 @@ mod test_support {
     #[cfg(feature = "ffmpeg-library")]
     include!("../support/media.rs");
 }
+mod template_placeholder;
 mod text_shadow;
 mod time_remap;
 mod timing;

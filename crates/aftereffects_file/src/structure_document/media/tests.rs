@@ -88,6 +88,7 @@ fn source(kind: MediaKind) -> ProjectItem {
         solid: None,
         media: Some(Ok(descriptor(kind))),
         native_media: Some(Ok(descriptor(kind))),
+        ocio_input: None,
     }
 }
 

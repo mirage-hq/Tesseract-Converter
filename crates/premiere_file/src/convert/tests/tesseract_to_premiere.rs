@@ -9179,7 +9179,7 @@ fn video_input_transform_and_3d_position_are_reported() {
             "source",
             "inputTransform",
             input_transform,
-            "input transform was not exported",
+            "input transform was not exported as a LUT: the lut3d .cube asset \"input-lut\" was not read for export, so no clip Input LUT is written; Color Space Override \"Apple Log/Rec. 2020\" was written instead, so Premiere's own Apple Log/Rec. 2020 to working-space conversion replaces the LUT and colour specific to that LUT is lost",
         ),
         (
             "transform",
@@ -9213,6 +9213,124 @@ fn video_input_transform_and_3d_position_are_reported() {
             "{field}"
         );
     }
+}
+
+/// Without a readable `.cube` asset every Input Transform form keeps its
+/// picture and reports one contextual loss. A LUT from a camera encoding with
+/// a Premiere label into Rec.709 display still writes that Color Space
+/// Override on the media, and `cameraInput` outside an ACES document is reported.
+#[test]
+fn video_input_transform_reports_name_the_premiere_equivalent_or_aces() {
+    for (transform, expected, color_space_override) in [
+        (
+            json!({"type": "lut3d", "assetId": "grade", "inputEncoding": "jerboa:sdr-rec709-display:v1",
+                "outputEncoding": "jerboa:sdr-rec709-display:v1", "interpolation": "trilinear"}),
+            "the lut3d .cube asset \"grade\" was not read for export",
+            None,
+        ),
+        (
+            json!({"type": "lut3d", "assetId": "slog", "inputEncoding": "camera:sony-slog3-sgamut3-cine:v1",
+                "outputEncoding": "jerboa:sdr-rec709-display:v1", "interpolation": "trilinear"}),
+            "Color Space Override \"Sony S-Log3/S-Gamut3.Cine\" was written instead",
+            Some("Sony S-Log3/S-Gamut3.Cine"),
+        ),
+        (
+            json!({"type": "lut3d", "assetId": "flog", "inputEncoding": "camera:fujifilm-flog2:v1",
+                "outputEncoding": "jerboa:sdr-rec709-display:v1", "interpolation": "trilinear"}),
+            "the lut3d .cube asset \"flog\" was not read for export",
+            None,
+        ),
+        (
+            json!({"type": "cameraInput", "inputEncoding": "camera:arri-logc4:v1"}),
+            "input transform was not exported: cameraInput camera:arri-logc4:v1 is an ACES Input Transform, but the document is not an ACES document",
+            None,
+        ),
+    ] {
+        let mut wire = document();
+        wire["composition"]["layers"][0]["source"]["inputTransform"] =
+            json!({"semanticVersion": 1, "transform": transform});
+        let (project, omissions) = convert_with_omissions(wire).unwrap();
+        assert_eq!(
+            project
+                .single_sequence()
+                .unwrap()
+                .video_occurrences()
+                .count(),
+            1
+        );
+        let [omission] = &omissions[..] else {
+            panic!("{omissions:?}");
+        };
+        assert_eq!(omission.scope, crate::OmissionScope::Feature);
+        assert!(omission.reason.starts_with("input transform was not exported"));
+        assert!(omission.reason.contains(expected), "{}", omission.reason);
+        let overrides: Vec<_> = project
+            .media
+            .values()
+            .filter_map(|media| match media.video.as_ref()?.kind {
+                PrMediaKind::Video {
+                    color_space_override,
+                    ..
+                } => Some(color_space_override),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(overrides, [color_space_override], "{expected}");
+    }
+}
+
+/// Premiere interprets a media once for all of its clips: a second clip of
+/// the same media keeps its picture with the first clip's interpretation and
+/// reports the override it could not write.
+#[test]
+fn clips_of_one_media_share_the_first_written_color_space_override() {
+    let mut wire = two_clips();
+    wire["composition"]["layers"][0]["source"]["inputTransform"] = json!({"semanticVersion": 1, "transform": {
+        "type": "lut3d", "assetId": "slog", "inputEncoding": "camera:sony-slog3-sgamut3-cine:v1",
+        "outputEncoding": "jerboa:sdr-rec709-display:v1", "interpolation": "trilinear"}});
+    let (project, omissions) = convert_with_omissions(wire).unwrap();
+    assert_eq!(
+        project
+            .single_sequence()
+            .unwrap()
+            .video_occurrences()
+            .count(),
+        2
+    );
+    let shared: Vec<_> = omissions
+        .iter()
+        .filter(|omission| {
+            omission
+                .reason
+                .contains("Premiere interprets shared media once")
+        })
+        .collect();
+    assert_eq!(shared.len(), 1, "{omissions:?}");
+    let overrides: Vec<_> = project
+        .media
+        .values()
+        .filter_map(|media| match media.video.as_ref()?.kind {
+            PrMediaKind::Video {
+                color_space_override,
+                ..
+            } => Some(color_space_override),
+            _ => None,
+        })
+        .collect();
+    let [color_space_override] = overrides[..] else {
+        panic!("one shared video media: {overrides:?}");
+    };
+    let written = match color_space_override {
+        Some(label) => format!("Color Space Override {label:?}"),
+        None => "no Color Space Override".to_owned(),
+    };
+    assert!(
+        shared[0]
+            .reason
+            .contains(&format!("already wrote {written} and no Input LUT;")),
+        "{}",
+        shared[0].reason
+    );
 }
 
 /// A Linear Wipe keyed from 100 to 0 over its first source second.

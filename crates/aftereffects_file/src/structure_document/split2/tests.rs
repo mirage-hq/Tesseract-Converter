@@ -116,6 +116,7 @@ fn project() -> crate::structure::StructuralProject {
         footage: None,
         media: None,
         native_media: None,
+        ocio_input: None,
         solid: Some(Ok(crate::structure::SolidSource {
             width: 320,
             height: 180,
@@ -339,6 +340,7 @@ fn conversion_state(
     let mut converter = Converter {
         text_overrides: Default::default(),
         effect_definitions: &[],
+        grade_domain: crate::effects::color_grades::ColorGradeDomain::Legacy,
         expression_samples: &expression_samples,
         expression_evaluations: Default::default(),
         items: project.items.iter().map(|i| (i.id, i)).collect(),
@@ -359,6 +361,7 @@ fn conversion_state(
         shape_budget: shapes::OutputBudget::with_limit(shape_limit),
         mapped_shape_expressions: Default::default(),
         root_progress: fx_conv::Progress::default().phase("test", "layers", 0),
+        hdr_transfer: None,
     };
     let item = project.item(1).unwrap();
     let layers = converter

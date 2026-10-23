@@ -163,7 +163,8 @@ fn a_flagged_black_video_clip_reads_as_an_adjustment_with_its_effects() {
         [
             PrMediaKind::Video {
                 codec: None,
-                hdr_profile: None
+                hdr_profile: None,
+                color_space_override: None
             },
             PrMediaKind::Adjustment
         ]

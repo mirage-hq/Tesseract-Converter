@@ -411,6 +411,7 @@ impl ExportFromTesseract for Premiere {
             input,
             output,
             options.frame_rate.unwrap_or(FrameRate::Fps30),
+            options.hdr,
             mode.is_check(),
             progress,
         )?)

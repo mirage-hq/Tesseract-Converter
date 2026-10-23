@@ -344,6 +344,27 @@ pub(crate) fn import(native: &DecodedEffect, size: [f64; 2], payload: &mut Value
     match native.match_name.as_str() {
         "ADBE Invert" => report.consume("-0001"),
         "ADBE Fast Blur" => report.consume("-0002"),
+        "ADBE Gaussian Blur 2" => {
+            if let Some(dimensions) = scalar(native, "-0002", &mut report.warnings) {
+                report.consume("-0002");
+                if dimensions != 1.0 {
+                    let mode = match dimensions {
+                        2.0 => "Horizontal",
+                        3.0 => "Vertical",
+                        _ => "unknown",
+                    };
+                    report.warnings.push(format!("-0002 Blur Dimensions {mode} ({dimensions}) is not Horizontal and Vertical; FX gaussianBlur always blurs both axes"));
+                }
+            }
+        }
+        "ADBE Brightness & Contrast 2" => {
+            if let Some(legacy) = scalar(native, "-0003", &mut report.warnings) {
+                report.consume("-0003");
+                if legacy != 0.0 {
+                    report.warnings.push("Use Legacy (supports HDR) is on: the native legacy mode adds Brightness/255, then scales about 0.5 by 100/(100 - Contrast) for positive Contrast or (100 + Contrast)/100 otherwise (measured on an 8 bpc ramp); FX has no legacy kernel, so the native values are kept and render with the FX kernel (mean 7.0-22.8/255, max 53/255 from the native legacy render)".into());
+                }
+            }
+        }
         "ADBE Fill" => {
             for (suffix, label) in [
                 ("-0003", "Horizontal Feather"),

@@ -10,6 +10,7 @@ fn converter<'a>(
     Converter {
         text_overrides: Default::default(),
         effect_definitions: &[],
+        grade_domain: crate::effects::color_grades::ColorGradeDomain::Legacy,
         expression_samples: samples,
         expression_evaluations: Default::default(),
         items: HashMap::new(),
@@ -30,6 +31,7 @@ fn converter<'a>(
         shape_budget: shapes::OutputBudget::default(),
         mapped_shape_expressions: Default::default(),
         root_progress: Progress::default().phase("parent lookup probe", "layers", 0),
+        hdr_transfer: None,
     }
 }
 

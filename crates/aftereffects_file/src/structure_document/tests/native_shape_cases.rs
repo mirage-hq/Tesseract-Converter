@@ -642,7 +642,10 @@ fn native_solid_paint_controls_remain_editable() {
                 match check {
                     0 => assert_eq!(rect.rect.fill_color, [0.125, 0.75, 0.25, 1.0]),
                     1 => assert_eq!(rect.transform.opacity.value(), 60.0),
-                    2 => assert_eq!(rect.rect.stroke_color, Some([0.25, 0.875, 0.125, 1.0])),
+                    2 => assert_eq!(
+                        rect.rect.stroke_color,
+                        Some([0.25, 0.875, 0.125, 1.0].into())
+                    ),
                     3 => assert_eq!(rect.rect.stroke_width.value(), 22.0),
                     4 => assert_eq!(rect.transform.opacity.value(), 55.0),
                     5 => assert_eq!(rect.rect.stroke_join, fx_composition::ShapeLineJoin::Miter),

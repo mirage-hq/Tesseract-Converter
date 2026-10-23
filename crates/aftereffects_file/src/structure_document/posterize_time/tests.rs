@@ -253,6 +253,7 @@ fn split_above_posterize_project() -> crate::structure::StructuralProject {
         footage: None,
         media: None,
         native_media: None,
+        ocio_input: None,
         solid: Some(Ok(crate::structure::SolidSource {
             width: 320,
             height: 180,
@@ -974,6 +975,7 @@ fn nested_copy_identity_failure_restores_converter_context_and_original_output()
     let mut converter = Converter {
         text_overrides: Default::default(),
         effect_definitions: &[],
+        grade_domain: crate::effects::color_grades::ColorGradeDomain::Legacy,
         expression_samples: &expression_samples,
         expression_evaluations: Default::default(),
         items: project.items.iter().map(|item| (item.id, item)).collect(),
@@ -994,6 +996,7 @@ fn nested_copy_identity_failure_restores_converter_context_and_original_output()
         shape_budget: shapes::OutputBudget::default(),
         mapped_shape_expressions: Default::default(),
         root_progress: fx_conv::Progress::default().phase("test", "layers", 0),
+        hdr_transfer: None,
     };
     let ItemKind::Composition(comp) = &project.items.iter().find(|item| item.id == 1).unwrap().kind
     else {

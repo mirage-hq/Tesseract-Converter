@@ -1,0 +1,503 @@
+{
+ "schema": "lumetri-probe-provenance/v1",
+ "case": "lumetri_rgb_curves_probe",
+ "feature": "Lumetri Color RGB Curves (ParameterID 39): saved curve order, point domain and interpolation, measured against Premiere renders",
+ "project": {
+  "repo_path": "crates/premiere_file/tests/fixtures/lumetri_rgb_curves_probe.prproj",
+  "size_bytes": 33220,
+  "sha256": "d129dadcef1c137ad8329ceddd26acfed7cfcca45f963570c4fbad1fec6639d8",
+  "path_sanitization": {
+   "original_sha256": "c4f40b647cc36659547d1bca3430eccdf8195fea46f04c4cf7d05579d99d7272",
+   "note": "absolute private-job media/project paths replaced by /fixture-source/<fixture>; RelativePath ./lumetri_rgb_curves_probe.ramp.png; re-gzipped; nothing else changed"
+  }
+ },
+ "media": [
+  {
+   "file_name": "lumetri_rgb_curves_probe.ramp.png",
+   "committed": false,
+   "local_evidence": true,
+   "size_bytes": 9041,
+   "sha256": "d76a872ce6c1f6ca80d4c0c9926af2d00fdd470ea8e6819a4ffcf09a987847e2",
+   "generator": {
+    "repo_path": "crates/premiere_file/tests/fixtures/lumetri_rgb_curves_probe.ramp.py",
+    "size_bytes": 759,
+    "sha256": "08af546eddcff97d4f73ccd50ee7ac50b1cbbb04d58e70d04029b8b39a365511"
+   },
+   "bands": "1920x1080: rows 0-269 grey ramp floor(x*256/1920); 270-539 hue sweep S=1 V=1; 540-809 hue sweep S=0.5 V=0.75; 810-1079 saturation sweep hue 30 V=0.9"
+  }
+ ],
+ "sequence_uid": "d0ca1f44-75cd-48dd-841a-b5ce49d5f23d",
+ "sequence_name": "Lumetri Arbitrary Probe",
+ "premiere_version": "26.5.2",
+ "colour_setup": {
+  "working_space": "Rec. 709",
+  "graphics_white": 203,
+  "maximum_bit_depth": false
+ },
+ "authoring": {
+  "host": {
+   "operation": "headless-adobe run_jsx (managed, native save + close + reopen)",
+   "request_id": "lane-d-w5-pr-author-multiclip-v1",
+   "script": {
+    "repo_path": "crates/premiere_file/tests/fixtures/lumetri_rgb_curves_probe.author.jsx",
+    "size_bytes": 16129,
+    "sha256": "a0e691fb1be7c8a1a1481b91639b9a3215a774adcecc4a31241e9690287e3891",
+    "comment_edit": {
+     "authored_sha256": "e1606b926c42ecde5df3ce4639775beabd3deb4fa5c09139e6b594e7f5111fff",
+     "note": "one comment line reworded after authoring; no code changed"
+    }
+   },
+   "data": {
+    "sequence_name": "Lumetri Arbitrary Probe",
+    "working_space": "Rec. 709",
+    "graphics_white": 203,
+    "clips": 8
+   },
+   "result": "eight back-to-back 1 s clips (30 fps, 1920x1080), one default Lumetri Color each; artifact sha256 05547fccbc1b0eb64493495b4fc679e131b4fc3e208357d0658b550aabf1d6db"
+  },
+  "payloads": {
+   "operation": "offline edit of each clip's Lumetri ParameterID 39 StartKeyframeValue (inline base64, fresh BinaryHash with the byte length + 12 suffix); clip 0 untouched",
+   "spec": {
+    "clips": [
+     {},
+     {
+      "39": [
+       [
+        0,
+        [
+         [
+          0,
+          0
+         ],
+         [
+          0.5,
+          0.75
+         ],
+         [
+          1,
+          1
+         ]
+        ]
+       ],
+       [
+        0,
+        [
+         [
+          0,
+          0
+         ],
+         [
+          1,
+          1
+         ]
+        ]
+       ],
+       [
+        0,
+        [
+         [
+          0,
+          0
+         ],
+         [
+          1,
+          1
+         ]
+        ]
+       ],
+       [
+        0,
+        [
+         [
+          0,
+          0
+         ],
+         [
+          1,
+          1
+         ]
+        ]
+       ]
+      ]
+     },
+     {
+      "39": [
+       [
+        0,
+        [
+         [
+          0,
+          0
+         ],
+         [
+          1,
+          1
+         ]
+        ]
+       ],
+       [
+        0,
+        [
+         [
+          0,
+          0
+         ],
+         [
+          0.5,
+          0.75
+         ],
+         [
+          1,
+          1
+         ]
+        ]
+       ],
+       [
+        0,
+        [
+         [
+          0,
+          0
+         ],
+         [
+          1,
+          1
+         ]
+        ]
+       ],
+       [
+        0,
+        [
+         [
+          0,
+          0
+         ],
+         [
+          1,
+          1
+         ]
+        ]
+       ]
+      ]
+     },
+     {
+      "39": [
+       [
+        0,
+        [
+         [
+          0,
+          0
+         ],
+         [
+          1,
+          1
+         ]
+        ]
+       ],
+       [
+        0,
+        [
+         [
+          0,
+          0
+         ],
+         [
+          1,
+          1
+         ]
+        ]
+       ],
+       [
+        0,
+        [
+         [
+          0,
+          0
+         ],
+         [
+          0.5,
+          0.75
+         ],
+         [
+          1,
+          1
+         ]
+        ]
+       ],
+       [
+        0,
+        [
+         [
+          0,
+          0
+         ],
+         [
+          1,
+          1
+         ]
+        ]
+       ]
+      ]
+     },
+     {
+      "39": [
+       [
+        0,
+        [
+         [
+          0,
+          0
+         ],
+         [
+          1,
+          1
+         ]
+        ]
+       ],
+       [
+        0,
+        [
+         [
+          0,
+          0
+         ],
+         [
+          1,
+          1
+         ]
+        ]
+       ],
+       [
+        0,
+        [
+         [
+          0,
+          0
+         ],
+         [
+          1,
+          1
+         ]
+        ]
+       ],
+       [
+        0,
+        [
+         [
+          0,
+          0
+         ],
+         [
+          0.5,
+          0.75
+         ],
+         [
+          1,
+          1
+         ]
+        ]
+       ]
+      ]
+     },
+     {
+      "39": [
+       [
+        0,
+        [
+         [
+          0,
+          0
+         ],
+         [
+          0.25,
+          0.15
+         ],
+         [
+          0.5,
+          0.6
+         ],
+         [
+          0.75,
+          0.7
+         ],
+         [
+          1,
+          1
+         ]
+        ]
+       ],
+       [
+        0,
+        [
+         [
+          0,
+          0
+         ],
+         [
+          1,
+          1
+         ]
+        ]
+       ],
+       [
+        0,
+        [
+         [
+          0,
+          0
+         ],
+         [
+          1,
+          1
+         ]
+        ]
+       ],
+       [
+        0,
+        [
+         [
+          0,
+          0
+         ],
+         [
+          1,
+          1
+         ]
+        ]
+       ]
+      ]
+     },
+     {
+      "39": [
+       [
+        0,
+        [
+         [
+          0,
+          0.2
+         ],
+         [
+          1,
+          0.8
+         ]
+        ]
+       ],
+       [
+        0,
+        [
+         [
+          0,
+          0
+         ],
+         [
+          1,
+          1
+         ]
+        ]
+       ],
+       [
+        0,
+        [
+         [
+          0,
+          0
+         ],
+         [
+          1,
+          1
+         ]
+        ]
+       ],
+       [
+        0,
+        [
+         [
+          0,
+          0
+         ],
+         [
+          1,
+          1
+         ]
+        ]
+       ]
+      ]
+     },
+     {
+      "39": [
+       [
+        0,
+        [
+         [
+          0,
+          0
+         ],
+         [
+          0.3,
+          0.7
+         ],
+         [
+          1,
+          1
+         ]
+        ]
+       ],
+       [
+        0,
+        [
+         [
+          0,
+          0
+         ],
+         [
+          1,
+          1
+         ]
+        ]
+       ],
+       [
+        0,
+        [
+         [
+          0,
+          0
+         ],
+         [
+          1,
+          1
+         ]
+        ]
+       ],
+       [
+        0,
+        [
+         [
+          0,
+          0
+         ],
+         [
+          1,
+          1
+         ]
+        ]
+       ]
+      ]
+     }
+    ]
+   },
+   "spec_note": "per clip: [kind, points] for Luma, Red, Green, Blue"
+  }
+ },
+ "reference": {
+  "file_name": "lumetri_rgb_curves_probe.premiere-direct-v1.mp4",
+  "committed": false,
+  "local_evidence": true,
+  "size_bytes": 112696,
+  "sha256": "0e4e93d4713f82feb9dbbaf785f29304ac5956aab9afb8669fb205a031d64443",
+  "operation": "headless-adobe render_premiere (Premiere 26.5.2 Sequence.exportAsMediaDirect, Apple ProRes 4444 preset, lossless RGB intermediate packaged as H.264 CRF 18 BT.709)",
+  "request_id": "lane-d-w5-render-premiere-curves-v1",
+  "rendered_from_sha256": "c4f40b647cc36659547d1bca3430eccdf8195fea46f04c4cf7d05579d99d7272",
+  "measurements_note": "measured on the lossless intermediate (frame 30k+15 of clip k): Luma/Red/Green/Blue order; natural cubic spline through the points, output clamped to 0-1, within 0.76 codes on the grey ramp; Red/Green/Blue per channel within 1 code on the colour bands; the Luma curve leaves fully saturated colours unchanged"
+ }
+}

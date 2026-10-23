@@ -68,15 +68,9 @@ pub(crate) fn unsupported_reason(effect: &LayerEffect) -> Option<&'static str> {
         LayerEffect::PersonMatte { .. } | LayerEffect::DepthMatte { .. } => {
             Some("ML-generated matte sources have no native effect equivalent")
         }
-        LayerEffect::LookTransform { .. }
-        | LayerEffect::PrimaryGrade(_)
-        | LayerEffect::TonalColor(_)
-        | LayerEffect::ColorCurves { .. }
-        | LayerEffect::HueCurves(_)
-        | LayerEffect::ChannelMixer(_)
-        | LayerEffect::SelectiveColor(_) => {
-            Some("reader-specific color operation has no native effect equivalent")
-        }
+        LayerEffect::LookTransform { .. } => Some(
+            "only a 3D-LUT lookTransform in the display-referred SDR encoding exports (as Apply Color LUT); this one has no such LUT",
+        ),
         LayerEffect::CustomShader { .. } => {
             Some("custom WGSL shaders cannot be exported as native effects")
         }
@@ -131,7 +125,13 @@ pub(crate) fn unsupported_reason(effect: &LayerEffect) -> Option<&'static str> {
         | LayerEffect::TintTritone { .. }
         | LayerEffect::GradientRamp { .. }
         | LayerEffect::TurbulentNoise { .. }
-        | LayerEffect::Fisheye { .. } => None,
+        | LayerEffect::Fisheye { .. }
+        | LayerEffect::PrimaryGrade(_)
+        | LayerEffect::ColorCurves { .. }
+        | LayerEffect::HueCurves(_)
+        | LayerEffect::TonalColor(_)
+        | LayerEffect::ChannelMixer(_)
+        | LayerEffect::SelectiveColor(_) => None,
     }
 }
 
@@ -143,8 +143,6 @@ pub(crate) fn animatable_params(effect: &LayerEffect) -> &'static [&'static str]
         LayerEffect::PersonMatte { .. }
         | LayerEffect::DepthMatte { .. }
         | LayerEffect::LookTransform { .. }
-        | LayerEffect::PrimaryGrade(_)
-        | LayerEffect::TonalColor(_)
         | LayerEffect::ColorCurves { .. }
         | LayerEffect::HueCurves(_)
         | LayerEffect::ChannelMixer(_)
@@ -153,6 +151,32 @@ pub(crate) fn animatable_params(effect: &LayerEffect) -> &'static [&'static str]
         | LayerEffect::PosterizeTime { .. }
         | LayerEffect::CustomShader { .. }
         | LayerEffect::Unsupported(_) => &[],
+        LayerEffect::PrimaryGrade(_) => &[
+            "temperature",
+            "tint",
+            "exposure",
+            "contrast",
+            "highlights",
+            "shadows",
+            "whites",
+            "blacks",
+            "saturation",
+            "vibrance",
+        ],
+        LayerEffect::TonalColor(_) => &[
+            "globalRed",
+            "globalGreen",
+            "globalBlue",
+            "shadowsRed",
+            "shadowsGreen",
+            "shadowsBlue",
+            "midtonesRed",
+            "midtonesGreen",
+            "midtonesBlue",
+            "highlightsRed",
+            "highlightsGreen",
+            "highlightsBlue",
+        ],
         LayerEffect::GaussianBlur { .. } => &["blurriness"],
         LayerEffect::Glow { .. } => &["glowThreshold", "glowRadius", "glowIntensity"],
         LayerEffect::DirectionalBlur { .. } => &["direction", "blurLength"],

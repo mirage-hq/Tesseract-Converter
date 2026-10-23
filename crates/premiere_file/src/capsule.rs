@@ -399,7 +399,12 @@ impl SavedCapsule {
                     text.set_value(
                         &value.text,
                         &font,
-                        value.size.unwrap_or(text.document.font_size.value()),
+                        value.size.unwrap_or_else(|| {
+                            text.document
+                                .font_size
+                                .number()
+                                .expect("an imported template text holds its font size")
+                        }),
                         value.all_caps.unwrap_or(text.document.all_caps),
                     )?;
                     texts.push(text);

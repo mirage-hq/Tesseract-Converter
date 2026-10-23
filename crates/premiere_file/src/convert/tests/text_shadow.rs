@@ -302,11 +302,11 @@ fn imported_text_keeps_its_own_stroke_with_the_shadow_as_its_only_effect() {
     else {
         panic!("the graphic is the top layer");
     };
-    assert_eq!(text.source_text.font_family.as_ref(), "MinionPro-Regular");
+    assert_eq!(text.source_text.font_family, "MinionPro-Regular");
     assert_eq!(text.source_text.font_style.as_ref(), "");
     // The stroke stays the text's paint, drawn with the fill over the shadow.
     assert!(text.source_text.apply_stroke && !text.source_text.stroke_over_fill);
-    assert_eq!(text.source_text.stroke_width.value(), 8.0);
+    assert_eq!(text.source_text.stroke_width.number(), Some(8.0));
     let [effect] = text.effects.as_slice() else {
         panic!("expected one effect: {:?}", text.effects);
     };

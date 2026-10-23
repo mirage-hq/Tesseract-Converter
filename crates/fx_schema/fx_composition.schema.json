@@ -11,7 +11,7 @@
   "properties": {
     "version": {
       "description": "FX composition schema version.",
-      "const": 77
+      "const": 80
     },
     "backgroundColor": {
       "description": "Composition background: finite extended-sRGB RGB 0..64 and coverage alpha 0..1.",
@@ -30,6 +30,125 @@
   },
   "additionalProperties": false,
   "$defs": {
+    "variableLink": {
+      "type": "object",
+      "description": "A link that reads the nearest variable with this name: the layer's own Group variables first, then each enclosing Group, then the composition. It replaces a value of the variable's type.",
+      "required": [
+        "type",
+        "value"
+      ],
+      "properties": {
+        "type": {
+          "const": "linked"
+        },
+        "value": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "variableValue": {
+      "description": "A variable's typed value.",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "type",
+            "value"
+          ],
+          "properties": {
+            "type": {
+              "const": "text"
+            },
+            "value": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "type",
+            "value"
+          ],
+          "properties": {
+            "type": {
+              "const": "color"
+            },
+            "value": {
+              "$ref": "#/$defs/extendedColor"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "type",
+            "value"
+          ],
+          "properties": {
+            "type": {
+              "const": "image"
+            },
+            "value": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "type",
+            "value"
+          ],
+          "properties": {
+            "type": {
+              "const": "number"
+            },
+            "value": {
+              "type": "number"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "type",
+            "value"
+          ],
+          "properties": {
+            "type": {
+              "const": "font"
+            },
+            "value": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "variables": {
+      "type": "object",
+      "description": "Variables keyed by a name unique within the Group or composition that defines them.",
+      "additionalProperties": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/variableValue"
+          },
+          {
+            "$ref": "#/$defs/variableLink"
+          }
+        ]
+      }
+    },
     "JBColorManagementModel": {
       "additionalProperties": false,
       "oneOf": [
@@ -185,6 +304,10 @@
           "type": "string",
           "minLength": 1
         },
+        "variables": {
+          "description": "Typed values that every layer property and Group variable in the composition can link to by name. This is the outermost scope, so these variables hold values, never links.",
+          "$ref": "#/$defs/variables"
+        },
         "width": {
           "type": "integer",
           "minimum": 1
@@ -210,6 +333,11 @@
           },
           "uniqueItems": true,
           "default": []
+        },
+        "storylineModel": {
+          "description": "Storyline model version that the root layers' storyline flags follow. Omitted for compositions that declare no storyline model.",
+          "type": "integer",
+          "minimum": 0
         },
         "layers": {
           "type": "array",
@@ -2095,6 +2223,10 @@
             "type": {
               "const": "Group"
             },
+            "variables": {
+              "description": "Typed values that properties inside this Group, and the Group's own properties, can link to by name. A variable may itself link to a variable of an enclosing Group or the composition.",
+              "$ref": "#/$defs/variables"
+            },
             "renderDomain": {
               "type": "string",
               "enum": [
@@ -2399,6 +2531,11 @@
             "type": {
               "const": "Video"
             },
+            "storyline": {
+              "description": "Marks a root layer as a storyline clip: one of the main clips placed end to end at the bottom of the timeline. Readers drop the flag on nested layers.",
+              "type": "boolean",
+              "default": false
+            },
             "renderDomain": {
               "type": "string",
               "enum": [
@@ -2500,6 +2637,11 @@
           "properties": {
             "type": {
               "const": "Image"
+            },
+            "storyline": {
+              "description": "Marks a root layer as a storyline clip: one of the main clips placed end to end at the bottom of the timeline. Readers drop the flag on nested layers.",
+              "type": "boolean",
+              "default": false
             },
             "renderDomain": {
               "type": "string",
@@ -3644,8 +3786,16 @@
       ],
       "properties": {
         "assetId": {
-          "type": "string",
-          "minLength": 1
+          "description": "Captions image asset id, or a link to an `image` variable.",
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "$ref": "#/$defs/variableLink"
+            }
+          ]
         },
         "inputTransform": {
           "description": "Optional reader-only source conversion evaluated before ordinary layer effects.",
@@ -4062,7 +4212,14 @@
               "const": "solid"
             },
             "color": {
-              "$ref": "#/$defs/extendedColor"
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/extendedColor"
+                },
+                {
+                  "$ref": "#/$defs/variableLink"
+                }
+              ]
             }
           },
           "additionalProperties": false
@@ -4176,7 +4333,14 @@
           "default": true
         },
         "fillColor": {
-          "$ref": "#/$defs/extendedColor"
+          "anyOf": [
+            {
+              "$ref": "#/$defs/extendedColor"
+            },
+            {
+              "$ref": "#/$defs/variableLink"
+            }
+          ]
         },
         "fillPaint": {
           "description": "Optional complete fill-paint override. Legacy rectangles omit this and derive a solid paint from fillColor.",
@@ -4192,7 +4356,14 @@
           "default": false
         },
         "strokeColor": {
-          "$ref": "#/$defs/extendedColor"
+          "anyOf": [
+            {
+              "$ref": "#/$defs/extendedColor"
+            },
+            {
+              "$ref": "#/$defs/variableLink"
+            }
+          ]
         },
         "strokeWidth": {
           "$ref": "#/$defs/nonNegativeProperty",
@@ -4263,18 +4434,42 @@
       ],
       "properties": {
         "text": {
-          "type": "string"
+          "description": "The source string rendered by the layer, or a link to a `text` variable.",
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "$ref": "#/$defs/variableLink"
+            }
+          ]
         },
         "fontFamily": {
-          "type": "string",
-          "minLength": 1
+          "description": "Font family name, or a link to a `font` variable.",
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "$ref": "#/$defs/variableLink"
+            }
+          ]
         },
         "fontStyle": {
           "type": "string",
           "default": "Regular"
         },
         "fontSize": {
-          "$ref": "#/$defs/positiveProperty"
+          "description": "Font size in pixels, or a link to a `number` variable.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/positiveProperty"
+            },
+            {
+              "$ref": "#/$defs/variableLink"
+            }
+          ]
         },
         "fontVariations": {
           "$ref": "#/$defs/fontVariations"
@@ -4284,17 +4479,39 @@
           "default": true
         },
         "fillColor": {
-          "$ref": "#/$defs/colorProperty"
+          "anyOf": [
+            {
+              "$ref": "#/$defs/colorProperty"
+            },
+            {
+              "$ref": "#/$defs/variableLink"
+            }
+          ]
         },
         "applyStroke": {
           "type": "boolean",
           "default": false
         },
         "strokeColor": {
-          "$ref": "#/$defs/colorProperty"
+          "anyOf": [
+            {
+              "$ref": "#/$defs/colorProperty"
+            },
+            {
+              "$ref": "#/$defs/variableLink"
+            }
+          ]
         },
         "strokeWidth": {
-          "$ref": "#/$defs/nonNegativeProperty",
+          "description": "Glyph stroke width in pixels, or a link to a `number` variable.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/nonNegativeProperty"
+            },
+            {
+              "$ref": "#/$defs/variableLink"
+            }
+          ],
           "default": 0
         },
         "strokeOverFill": {
@@ -4306,8 +4523,15 @@
           "default": "left"
         },
         "tracking": {
-          "description": "AE character tracking amount.",
-          "$ref": "#/$defs/scalarProperty",
+          "description": "AE character tracking amount, or a link to a `number` variable.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/scalarProperty"
+            },
+            {
+              "$ref": "#/$defs/variableLink"
+            }
+          ],
           "default": 0
         },
         "leading": {
@@ -4358,6 +4582,14 @@
             "center",
             "bottom"
           ]
+        },
+        "boxFit": {
+          "description": "How box text fits its box. \"none\" draws at fontSize and lets overflowing lines spill out. \"shrink\" draws at the largest size, at most fontSize, whose re-wrapped lines fit the box; leading and stroke width shrink with it, the lines are placed as one block per verticalAlign (absent = top), and boxFirstBaseline is ignored. Ignored for point text.",
+          "enum": [
+            "none",
+            "shrink"
+          ],
+          "default": "none"
         }
       },
       "additionalProperties": false
@@ -5440,6 +5672,11 @@
               "type": "null"
             }
           ]
+        },
+        "storyline": {
+          "description": "Marks a root layer as a storyline clip: one of the main clips placed end to end at the bottom of the timeline. Readers drop the flag on nested layers.",
+          "type": "boolean",
+          "default": false
         },
         "activeRange": {
           "description": "Immediate-parent-local segment span.",

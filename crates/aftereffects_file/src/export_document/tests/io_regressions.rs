@@ -973,7 +973,7 @@ fn native_point_text_survives_single_child_transform_wrappers() {
     fn texts(layers: &[Layer], output: &mut Vec<String>) {
         for layer in layers {
             match layer.data() {
-                LayerData::Text(text) => output.push(text.source_text.text.clone()),
+                LayerData::Text(text) => output.extend(text.source_text.text.value().cloned()),
                 LayerData::Group(group) => texts(&group.layers, output),
                 _ => {}
             }

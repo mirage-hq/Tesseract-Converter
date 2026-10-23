@@ -1,10 +1,12 @@
 //! Experimental lowering from current editable FX values, never source AEP bytes.
 
 mod animation_index;
+pub(crate) mod apply_color_lut;
 mod audio;
 mod blending_intervals;
 mod composition_options;
 mod directional_plane;
+mod effect_masks;
 pub(crate) mod effects;
 pub(crate) mod fonts;
 mod hdr_color;
@@ -90,6 +92,8 @@ pub(crate) struct ExportedDocument {
     pub omitted_layer_ids: BTreeSet<LayerId>,
     pub emitted_media_paths: BTreeSet<crate::writer::footage::RelativeMediaPath>,
     pub emitted_font_names: BTreeSet<String>,
+    /// LUT assets embedded in Apply Color LUT instances.
+    pub embedded_luts: BTreeSet<fx_schema::AssetId>,
 }
 
 #[derive(Clone, Copy)]
@@ -100,6 +104,7 @@ pub(crate) struct ExportDocumentViews<'a> {
     original_roots: &'a [Layer],
     selected: bool,
     fonts: Option<&'a fonts::ArchiveFonts>,
+    luts: Option<&'a apply_color_lut::ArchiveLuts>,
     hdr: Option<fx_conv::HdrTransfer>,
 }
 
@@ -115,6 +120,7 @@ impl<'a> ExportDocumentViews<'a> {
             original_roots: original.composition().layers(),
             selected: false,
             fonts: None,
+            luts: None,
             hdr: None,
         }
     }
@@ -131,6 +137,11 @@ impl<'a> ExportDocumentViews<'a> {
 
     pub(crate) fn with_fonts(mut self, fonts: &'a fonts::ArchiveFonts) -> Self {
         self.fonts = Some(fonts);
+        self
+    }
+
+    pub(crate) fn with_luts(mut self, luts: &'a apply_color_lut::ArchiveLuts) -> Self {
+        self.luts = Some(luts);
         self
     }
 
@@ -429,16 +440,19 @@ fn to_aep_with_media_fps_and_audio_mode(
 ) -> Result<ExportedDocument, AepWriteError> {
     progress.stage("prepare AE layers");
     let document = documents.prepared();
-    if !document.color_management().is_legacy() {
+    let aces = document.color_management().aces();
+    if aces.is_some() && documents.hdr.is_some() {
         return Err(AepWriteError::InvalidDocument(
-            "acescct color management cannot be exported to After Effects yet".into(),
+            "an FX ACES document exports as an OCIO ACES 2.0 project whose HDR output is chosen at render time (AE output-module colour space); --hdr applies only to legacy documents".into(),
         ));
     }
     let hdr = documents
         .hdr
         .map(|transfer| fx_conv::HdrColorBridge::new(transfer, document.hdr_graphics_white_nits()))
         .transpose()
-        .map_err(|error| AepWriteError::InvalidDocument(error.to_string()))?;
+        .map_err(|error| AepWriteError::InvalidDocument(error.to_string()))?
+        // The owned HDR profile is written at 32 bpc, which keeps codes above 1.0.
+        .map(fx_conv::HdrColorBridge::with_super_white_headroom);
     let rate = crate::timing::FrameRate::new(fps)?;
     let dimensions = document.dimensions();
     let interval_roots =
@@ -478,6 +492,7 @@ fn to_aep_with_media_fps_and_audio_mode(
     let animation_index = AnimationIndex::new(document.composition().dynamics().entries());
     let mut lowerer = Lowerer {
         hdr,
+        aces: aces.is_some(),
         rate,
         duration,
         end: Time::ZERO.saturating_add(document.duration()),
@@ -569,6 +584,12 @@ fn to_aep_with_media_fps_and_audio_mode(
         &mut lowerer.diagnostics,
         &mut lowerer.omitted_layer_ids,
     )?;
+    let embedded_luts = apply_color_lut::bind(
+        &mut lowerer.layers,
+        documents.luts,
+        &mut lowerer.diagnostics,
+    );
+    effect_masks::bind(&mut lowerer.layers, &mut lowerer.diagnostics);
     if lowerer.layers.is_empty() {
         if documents.selected {
             return Err(AepWriteError::NoConvertiblePicture(lowerer.diagnostics));
@@ -608,6 +629,13 @@ fn to_aep_with_media_fps_and_audio_mode(
     if let Some(transfer) = documents.hdr {
         crate::hdr::configure_project(&mut written, transfer)?;
     }
+    if let Some(policy) = aces {
+        crate::ocio::configure_project(&mut written)?;
+        lowerer.warn(None, format!("FX ACES document exported as an OCIO colour-managed 32 bpc project with the built-in {:?} config and the ACEScg working colour space; camera inputs are footage OCIO input colourspaces. Render through the ACES 2.0 SDR 100 nits (Rec.709) view on the Rec.1886 Rec.709 display to match FX; AE's output-module colour space is not written.", crate::ocio::ACES_STUDIO_CONFIG));
+        if policy.compositing != fx_schema::Compositing::WholeProgram {
+            lowerer.warn(None, format!("FX ACES compositing {:?} approximated: AE composites every layer in ACEScg (FX wholeProgram), so graphics, text and renderDomain display layers that FX keeps display-referred render through the ACES output in AE.", policy.compositing));
+        }
+    }
     lowerer
         .omitted_layer_ids
         .retain(|id| selected_source_ids.contains(id));
@@ -624,11 +652,15 @@ fn to_aep_with_media_fps_and_audio_mode(
         omitted_layer_ids: lowerer.omitted_layer_ids,
         emitted_media_paths: retained_media_paths,
         emitted_font_names,
+        embedded_luts,
     })
 }
 
 struct Lowerer<'a> {
     hdr: Option<fx_conv::HdrColorBridge>,
+    /// An FX ACES document, exported as an OCIO ACES 2.0 project whose
+    /// footage declares camera inputs as OCIO input colourspaces.
+    aces: bool,
     rate: crate::timing::FrameRate,
     duration: crate::timing::Duration24,
     end: Time,
@@ -664,6 +696,15 @@ struct LowerLayerContext<'a> {
 }
 
 impl Lowerer<'_> {
+    /// The colour domain whose Lumetri Exposure scale exported grades use.
+    fn grade_domain(&self) -> crate::effects::color_grades::ColorGradeDomain {
+        if self.aces {
+            crate::effects::color_grades::ColorGradeDomain::Aces
+        } else {
+            crate::effects::color_grades::ColorGradeDomain::Legacy
+        }
+    }
+
     fn validate_source_clock(
         &mut self,
         owner: LayerId,
@@ -698,6 +739,7 @@ impl Lowerer<'_> {
     fn probe_consumed_guides(&self, root_layers: &[Layer]) -> BTreeSet<LayerId> {
         let mut probe = Self {
             hdr: self.hdr,
+            aces: self.aces,
             rate: self.rate,
             duration: self.duration,
             end: self.end,
@@ -970,6 +1012,7 @@ impl Lowerer<'_> {
             size,
             self.rate,
             mosaic_domain,
+            self.grade_domain(),
         );
         if self.inside_precomposition && (!lowered.effects.is_empty() || !lowered.styles.is_empty())
         {
@@ -1348,6 +1391,7 @@ impl Lowerer<'_> {
                                 f64::from(self.dimensions.height),
                             ],
                             self.rate,
+                            self.grade_domain(),
                         );
                         let mut candidate_options = options.clone();
                         candidate_options.effects = lowered.effects;
@@ -2229,6 +2273,9 @@ impl Lowerer<'_> {
             }
         }
         self.diagnostics.extend(plan.diagnostics);
+        if let Some(reason) = media::input_transform_omission(layer) {
+            self.warn(Some(layer.id()), reason);
+        }
         self.layers.extend(plan.layers);
         Ok(())
     }
@@ -2275,6 +2322,7 @@ impl Lowerer<'_> {
             self.dynamics,
             [f64::from(handoff.width), f64::from(handoff.height)],
             self.rate,
+            self.grade_domain(),
         );
         options.effects = lowered_effects.effects;
         options.styles = lowered_effects.styles;
@@ -2411,6 +2459,25 @@ impl Lowerer<'_> {
             .resolved_media
             .get(request.asset_id.as_str())
             .ok_or("Media archive source was not resolved/staged")?;
+        let ocio_input = self
+            .aces
+            .then(|| media::camera_input_encoding(layer))
+            .flatten()
+            .and_then(|encoding| crate::ocio::footage_declaration(&encoding));
+        if ocio_input.is_none()
+            && let Some(input) = media::source_input_transform(layer)
+        {
+            match apply_color_lut::lower_input_transform(input) {
+                Ok((native, note)) => {
+                    options.effects.insert(0, native);
+                    self.warn(Some(layer.id()), note);
+                }
+                Err(reason) => self.warn(
+                    Some(layer.id()),
+                    format!("source.inputTransform omitted: {reason}; footage written ungraded"),
+                ),
+            }
+        }
         let content = media_matte_content_view(layer)
             .map_err(|_| "Media matte content view could not be constructed")?;
         let mut footage = match selected_transform {
@@ -2418,6 +2485,16 @@ impl Lowerer<'_> {
                 media::lower_with_transform(&content, resolved, self.dimensions, transform)?
             }
             None => media::lower(&content, resolved, self.dimensions)?,
+        };
+        footage.ocio_input = match footage.kind {
+            crate::writer::footage::FootageKind::Audio => None,
+            kind => ocio_input.or_else(|| {
+                self.aces.then(|| {
+                    crate::ocio::display_footage_declaration(
+                        kind == crate::writer::footage::FootageKind::Image,
+                    )
+                })
+            }),
         };
         // A translated unit-rate ancestor preserves the local playback derivative.
         if self.unit_rate_ancestors
@@ -4290,8 +4367,10 @@ fn has_visual_descendant(
         return false;
     }
     let painted = rect.rect.fill_paint.as_ref().map_or_else(
-        || rect.rect.fill_color[3] > 0.0,
-        |paint| matches!(paint, ShapePaint::Solid { color } if color[3] > 0.0),
+        || rect.rect.fill_color.value().is_some_and(|color| color[3] > 0.0),
+        |paint| {
+            matches!(paint, ShapePaint::Solid { color } if color.value().is_some_and(|color| color[3] > 0.0))
+        },
     );
     if !painted {
         return false;
@@ -4556,6 +4635,8 @@ fn normalize_approximate_group_radial_frame(
         dynamics,
         [f64::from(logical.width), f64::from(logical.height)],
         rate,
+        // Only Radial Blur replacements are taken from this lowering.
+        crate::effects::color_grades::ColorGradeDomain::Legacy,
     );
     let mut replacements = logical_effects
         .effects
@@ -7481,9 +7562,11 @@ fn vector_rect(layer: &RectLayer, transform: &Transform) -> Result<VectorRectSpe
         return Err("Rectangle geometry/Transform exceeds native static value bounds");
     }
     let color = if rect.fill_enabled {
-        Some(rect.fill_color)
+        rect.fill_color.value().copied()
     } else {
         rect.stroke_color
+            .as_ref()
+            .and_then(|color| color.value().copied())
     };
     if color.is_none_or(|color| !fx_schema::has_valid_extended_color(&color)) {
         return Err("Rectangle paint requires finite extended-sRGB RGB and normalized alpha");
@@ -7497,7 +7580,7 @@ fn vector_rect(layer: &RectLayer, transform: &Transform) -> Result<VectorRectSpe
         size: rect.size,
         position: center,
         roundness: rect.roundness,
-        fill_color: rect.fill_enabled.then_some(rect.fill_color),
+        fill_color: color.filter(|_| rect.fill_enabled),
         stroke_color: rect.stroke_enabled.then_some(color.expect("checked color")),
         stroke_width: rect.stroke_width.value(),
         stroke_join: rect.stroke_join,
@@ -7521,7 +7604,7 @@ fn solid(layer: &RectLayer, transform: &Transform) -> Result<SolidLayerSpec, &'s
             .is_some_and(|mode| mode != Default::default())
         || rect.stroke_enabled
         || rect.roundness != 0.0
-        || rect.fill_color[3] != 1.0
+        || rect.fill_color.value().is_none_or(|color| color[3] != 1.0)
     {
         return Err(
             "Only opaque solid-fill Rect content is exportable; paint, stroke, roundness and fill-alpha controls are not baked",
@@ -7541,9 +7624,13 @@ fn solid(layer: &RectLayer, transform: &Transform) -> Result<SolidLayerSpec, &'s
     if layer.name.is_empty() || layer.name.len() > 255 || layer.name.contains('\0') {
         return Err("Native solid name must be 1..=255 UTF-8 bytes without NUL");
     }
-    if !fx_schema::has_valid_extended_color(&rect.fill_color) {
+    let Some(fill_color) = rect
+        .fill_color
+        .value()
+        .filter(|color| fx_schema::has_valid_extended_color(color))
+    else {
         return Err("Solid color lies outside the extended shape-paint range");
-    }
+    };
     let anchor = [
         transform.anchor_point[0] - rect.position[0],
         transform.anchor_point[1] - rect.position[1],
@@ -7557,9 +7644,9 @@ fn solid(layer: &RectLayer, transform: &Transform) -> Result<SolidLayerSpec, &'s
         height: dimension(rect.size[1])?,
         // Native source RGB uses f32; conversion introduces at most f32 rounding.
         color: [
-            rect.fill_color[0] as f32,
-            rect.fill_color[1] as f32,
-            rect.fill_color[2] as f32,
+            fill_color[0] as f32,
+            fill_color[1] as f32,
+            fill_color[2] as f32,
         ],
         transform: SolidTransform {
             anchor,

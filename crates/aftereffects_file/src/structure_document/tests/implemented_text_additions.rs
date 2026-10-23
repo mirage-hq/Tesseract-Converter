@@ -123,7 +123,7 @@ fn assert_f32_color(actual: [f64; 4], expected: [f32; 4]) {
 
 fn assert_document_baseline(text: &TextLayer) {
     assert_eq!(text.source_text.text, "Editable\nText");
-    assert_eq!(&*text.source_text.font_family, "ArialMT");
+    assert_eq!(text.source_text.font_family, "ArialMT");
     // A dash-less PostScript name is kept whole, with no guessed style.
     assert_eq!(&*text.source_text.font_style, "");
 }
@@ -246,36 +246,44 @@ fn intrinsic_text_document_controls_import_typed_editable_values() {
                         assert_eq!(text.source_text.box_size, Some([600.0, 300.0]));
                     }
                     DocumentExpectation::FontSize(expected) => {
-                        assert_eq!(text.source_text.font_size.value(), expected);
+                        assert_eq!(text.source_text.font_size.number(), Some(expected));
                     }
                     DocumentExpectation::FillColor(expected) => {
                         assert!(text.source_text.apply_fill);
-                        assert_f32_color(text.source_text.fill_color, expected);
+                        assert_f32_color(*text.source_text.fill_color.value().unwrap(), expected);
                     }
                     DocumentExpectation::FillOff => {
                         assert!(!text.source_text.apply_fill);
                         assert!(text.source_text.apply_stroke);
                         assert_f32_color(
-                            text.source_text
+                            *text
+                                .source_text
                                 .stroke_color
-                                .expect("authored stroke color"),
+                                .as_ref()
+                                .expect("authored stroke color")
+                                .value()
+                                .unwrap(),
                             [1.0, 0.3, 0.2, 1.0],
                         );
-                        assert_eq!(text.source_text.stroke_width.value(), 3.0);
+                        assert_eq!(text.source_text.stroke_width.number(), Some(3.0));
                     }
                     DocumentExpectation::StrokeColor(expected) => {
                         assert!(text.source_text.apply_stroke);
                         assert_f32_color(
-                            text.source_text
+                            *text
+                                .source_text
                                 .stroke_color
-                                .expect("authored stroke color"),
+                                .as_ref()
+                                .expect("authored stroke color")
+                                .value()
+                                .unwrap(),
                             expected,
                         );
-                        assert_eq!(text.source_text.stroke_width.value(), 4.0);
+                        assert_eq!(text.source_text.stroke_width.number(), Some(4.0));
                     }
                     DocumentExpectation::StrokeWidth(expected) => {
                         assert!(text.source_text.apply_stroke);
-                        assert_eq!(text.source_text.stroke_width.value(), expected);
+                        assert_eq!(text.source_text.stroke_width.number(), Some(expected));
                     }
                     DocumentExpectation::StrokeOverFill => {
                         assert!(text.source_text.apply_fill);
@@ -325,8 +333,8 @@ fn full_justification_variants_map_to_supported_typed_justification() {
                     text.source_text.text,
                     "Editable paragraph with sufficient words to wrap across several lines and a short final line."
                 );
-                assert_eq!(&*text.source_text.font_family, "ArialMT");
-                assert_eq!(text.source_text.font_size.value(), 64.0);
+                assert_eq!(text.source_text.font_family, "ArialMT");
+                assert_eq!(text.source_text.font_size.number(), Some(64.0));
                 assert!(text.source_text.box_text);
                 assert_eq!(text.source_text.box_size, Some([700.0, 400.0]));
                 assert_eq!(text.source_text.justification, Justification::Justify);

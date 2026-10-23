@@ -104,12 +104,13 @@ use fx_schema::{
         PropertyKeyframeTrack,
     },
     AnimationGraph, BlendMode, Duration, EffectData, EffectPayload, EffectRecord, FxItemId,
-    GroupLayer, Layer, LayerData, LayerEffect, LayerId, MotionBlurSettings, NonNegativeProperty,
-    PathMask, PercentageProperty, Position, PositiveProperty, PropType, Property, PropertyTarget,
-    PropertyValue, ShapeContent, ShapeFillRule, ShapeFillStyle, ShapeGradientStop,
-    ShapeGradientType, ShapeHandleMirror, ShapeLayer, ShapeLineCap, ShapeLineJoin, ShapePaint,
-    ShapePath, ShapePathCommand, ShapeStrokeStyle, TextAnimator, TextDocument, TextLayer, Time,
-    TimeOffset, TimeRangeProperty, TrackMatte, TrackMatteType, Transform,
+    GroupLayer, Layer, LayerData, LayerEffect, LayerId, Linkable, MotionBlurSettings,
+    NonNegativeProperty, PathMask, PercentageProperty, Position, PositiveProperty, PropType,
+    Property, PropertyTarget, PropertyValue, ShapeContent, ShapeFillRule, ShapeFillStyle,
+    ShapeGradientStop, ShapeGradientType, ShapeHandleMirror, ShapeLayer, ShapeLineCap,
+    ShapeLineJoin, ShapePaint, ShapePath, ShapePathCommand, ShapeStrokeStyle, TextAnimator,
+    TextDocument, TextLayer, Time, TimeOffset, TimeRangeProperty, TrackMatte, TrackMatteType,
+    Transform,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -195,8 +196,11 @@ pub(super) fn import_graphic(
         return Ok(result);
     };
     let record = graphic.id().unwrap_or("graphic");
+    let white = scope.graphics_white;
     let mut messages = Vec::new();
-    let mut binding = fx_conv::GeneratedHdrColorBinding::new(transfer, &mut messages);
+    let mut binding =
+        fx_conv::GeneratedHdrColorBinding::with_graphics_white(transfer, white, &mut messages)
+            .map_err(|error| crate::error::unsupported(format!("{record}: {error}")))?;
     let mut value = serde_json::to_value(layer)?;
     binding.layer(&mut value);
     let layer = serde_json::from_value(value)?;
@@ -217,7 +221,7 @@ pub(super) fn import_graphic(
     for message in messages {
         approximate(omissions, record, message);
     }
-    approximate(omissions, record, "declared HDR Graphic source point colours normalized to FX white 609; native 8-bit storage, encoded interpolation, effects/blends and destination white/tone/gamut adaptation remain unproved");
+    approximate(omissions, record, format!("declared HDR Graphic source point colours normalized to FX graphics white {white} cd/m²; native 8-bit storage, encoded interpolation, effects/blends and destination white/tone/gamut adaptation remain unproved"));
     Ok(Some((layer, guide.clone())))
 }
 
@@ -409,6 +413,7 @@ fn import_graphic_unbound(
         id: group_id,
         name: format!("Premiere graphic {}", index + 1),
         description: String::new(),
+        variables: Default::default(),
         is_hidden: !graphic.enabled,
         parent: scope.parent,
         blend_mode: graphic.blend_mode.fx_mode(),
@@ -1189,6 +1194,7 @@ fn import_text_lines(
         id: placement.id,
         name: text.name.clone(),
         description: String::new(),
+        variables: Default::default(),
         is_hidden: !placement.inside_graphic && !graphic.enabled,
         parent: placement.parent,
         blend_mode: BlendMode::Normal,
@@ -1364,16 +1370,17 @@ fn source_text_tracks(
     // color of the first that has one.
     if text.document.stroke.is_none() {
         if let Some(stroke) = keys.iter().find_map(|key| key.document.stroke) {
-            source_text.stroke_color = Some(rgba(stroke.color));
+            source_text.stroke_color = Some(rgba(stroke.color).into());
             source_text.stroke_width =
                 NonNegativeProperty::new(STROKE_WIDTH_RATIO * f64::from(stroke.width))
-                    .ok_or_else(|| unsupported("text stroke width must be nonnegative"))?;
+                    .ok_or_else(|| unsupported("text stroke width must be nonnegative"))?
+                    .into();
         }
     }
     let fill = keys.iter().find_map(|key| key.document.fill);
     if text.document.fill.is_none() {
         if let Some(fill) = fill {
-            source_text.fill_color = rgba(fill);
+            source_text.fill_color = rgba(fill).into();
         }
     }
     let mut tracks = Vec::with_capacity(fields.len());
@@ -1457,7 +1464,11 @@ fn import_stroke_width(
         return Ok(());
     }
     let id = FxItemId::new(next_layer_id(scope).value());
-    let base = layer.source_text.stroke_width.value();
+    let base = layer
+        .source_text
+        .stroke_width
+        .number()
+        .expect("imported text holds its stroke width");
     let keys = text
         .source_text_keys
         .iter()
@@ -1533,10 +1544,17 @@ pub(super) fn stroke_width_source(
             return Ok(source);
         }
         if let Some(delta) = animator.stroke_width {
-            source.stroke_width = total_stroke_width(source.stroke_width.value(), delta)?;
+            source.stroke_width = total_stroke_width(linked_stroke_width(&source)?, delta)?.into();
         }
     }
     Ok(source)
+}
+
+fn linked_stroke_width(source: &TextDocument) -> Result<f64> {
+    source
+        .stroke_width
+        .number()
+        .ok_or_else(|| unsupported("a linked text stroke width is unsupported"))
 }
 
 fn total_stroke_width(base: f64, delta: f64) -> Result<NonNegativeProperty> {
@@ -1883,6 +1901,18 @@ pub(super) fn graphic_objects<'a>(
     (!nest).then_some(objects)
 }
 
+/// The PostScript name of a Text's font. A linked family names no font.
+fn text_postscript_name(
+    doc: &TextDocument,
+    fonts: &BTreeMap<String, fx_schema::FontAssetProperties>,
+) -> std::result::Result<String, String> {
+    let family = doc
+        .font_family
+        .value()
+        .ok_or_else(|| "a linked font family is unsupported".to_owned())?;
+    fonts::postscript_name(family, &doc.font_style, fonts)
+}
+
 /// Whether text layer `layer` converts to a graphic Text ([`text_object`])
 /// whatever font export finds for it: which fonts are packaged only export
 /// knows, and there an unpackaged one leaves out that Text alone
@@ -1891,8 +1921,8 @@ fn text_converts(layer: &TextLayer, dynamics: &AnimationGraph) -> bool {
     let doc = &layer.source_text;
     // A style names a packaged face, whose PostScript name export looks up;
     // the text's checks read the name only as a name.
-    let font = fonts::postscript_name(&doc.font_family, &doc.font_style, &BTreeMap::new())
-        .unwrap_or_else(|_| "PackagedFace".to_owned());
+    let font =
+        text_postscript_name(doc, &BTreeMap::new()).unwrap_or_else(|_| "PackagedFace".to_owned());
     text_object(layer, layer.parent, font, dynamics, &mut Vec::new(), "")
         .is_ok_and(|text| PrGraphicObject::Text(text).validate().is_ok())
 }
@@ -2448,7 +2478,10 @@ fn group_background(
     let [fill] = group.fills.as_slice() else {
         return Err(unsupported("a text background has one fill"));
     };
-    let ShapePaint::Solid { color } = fill.paint else {
+    let ShapePaint::Solid {
+        color: Linkable::Value(color),
+    } = fill.paint
+    else {
         return Err(unsupported("a text background has a solid fill"));
     };
     ensure!(
@@ -2565,14 +2598,13 @@ fn object_part(
     match object {
         ObjectLayer::Text(layer) => {
             let doc = &layer.source_text;
-            let font =
-                match fonts::postscript_name(&doc.font_family, &doc.font_style, context.fonts) {
-                    Ok(font) => font,
-                    Err(reason) => {
-                        omit(omissions, OmissionScope::Occurrence, record, reason);
-                        return None;
-                    }
-                };
+            let font = match text_postscript_name(doc, context.fonts) {
+                Ok(font) => font,
+                Err(reason) => {
+                    omit(omissions, OmissionScope::Occurrence, record, reason);
+                    return None;
+                }
+            };
             Some(
                 super::tesseract_to_premiere::text_object_with_hdr(
                     layer,
@@ -2919,9 +2951,9 @@ fn export_objects(
                         .map(|fill| &fill.paint)
                         .chain(layer.shape.strokes.iter().map(|stroke| &stroke.paint))
                         .any(|paint| match paint {
-                            ShapePaint::Solid { color } => {
+                            ShapePaint::Solid { color } => color.value().is_some_and(|color| {
                                 color[..3].iter().any(|channel| *channel > 1.0)
-                            }
+                            }),
                             ShapePaint::Gradient { stops, .. } => stops
                                 .iter()
                                 .any(|stop| stop.color[..3].iter().any(|channel| *channel > 1.0)),
@@ -3507,18 +3539,18 @@ fn source_text_keys(
                 })
             };
             match (field, value) {
-                (SourceTextField::Text, PropertyValue::String(text)) => doc.text = text,
+                (SourceTextField::Text, PropertyValue::String(text)) => doc.text = text.into(),
                 (SourceTextField::Size, PropertyValue::Float(size)) => {
-                    doc.font_size = positive(size)?;
+                    doc.font_size = positive(size)?.into();
                 }
                 (SourceTextField::FillEnabled, PropertyValue::Bool(enabled)) => {
                     doc.apply_fill = enabled;
                 }
                 (SourceTextField::FillColor, PropertyValue::Color(color)) => {
-                    doc.fill_color = color;
+                    doc.fill_color = color.into();
                 }
                 (SourceTextField::Tracking, PropertyValue::Float(tracking)) => {
-                    doc.tracking = tracking;
+                    doc.tracking = tracking.into();
                 }
                 (SourceTextField::Leading, PropertyValue::Float(leading)) => {
                     doc.leading = Some(positive(leading)?);
@@ -3527,7 +3559,8 @@ fn source_text_keys(
                     doc.apply_stroke = enabled;
                 }
                 (SourceTextField::StrokeWidth, PropertyValue::Float(delta)) => {
-                    doc.stroke_width = total_stroke_width(source_text.stroke_width.value(), delta)?;
+                    doc.stroke_width =
+                        total_stroke_width(linked_stroke_width(source_text)?, delta)?.into();
                 }
                 (SourceTextField::AllCaps, PropertyValue::Bool(all_caps)) => {
                     doc.all_caps = all_caps;
@@ -4316,7 +4349,10 @@ fn premiere_fill(
     );
     let (gradient_type, start, end, stops) = match &fill.paint {
         ShapePaint::Solid { color } => {
-            return Ok(PrFill::Solid(shape_rgb(*color, "shape fill", hdr)?))
+            let color = color
+                .value()
+                .ok_or_else(|| unsupported("linked shape fill colors are unsupported"))?;
+            return Ok(PrFill::Solid(shape_rgb(*color, "shape fill", hdr)?));
         }
         ShapePaint::Gradient {
             gradient_type,
@@ -4400,9 +4436,12 @@ fn shape_stroke(
     hdr: Option<fx_conv::HdrColorBridge>,
 ) -> Result<PrShapeStroke> {
     ensure!(stroke.enabled, "a disabled shape stroke is unsupported");
-    let ShapePaint::Solid { color } = stroke.paint else {
+    let ShapePaint::Solid { color } = &stroke.paint else {
         return Err(unsupported("gradient shape strokes are unsupported"));
     };
+    let color = *color
+        .value()
+        .ok_or_else(|| unsupported("linked shape stroke colors are unsupported"))?;
     ensure!(
         stroke.dashes.is_empty() && stroke.dash_offset == 0.0,
         "dashed shape strokes are unsupported"

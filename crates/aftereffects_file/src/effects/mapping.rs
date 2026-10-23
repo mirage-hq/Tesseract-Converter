@@ -130,7 +130,7 @@ static MAPPINGS: &[Mapping] = &[
     mapping!("ADBE Shift Channels" => "shiftChannels", "Only own-channel or Full On/Full Off red/green/blue routing; alpha/luma/hue/cross-channel routes and popup animation are diagnosed.";),
     mapping!("ADBE Drop Shadow" => "dropShadow", "A static direction projects native distance keys into editable Vector2 offset keys; animated direction or expressions retain an initial offset. Softness is approximated as half the native control in existing FX sigma units, including editable scalar keys. Shadow Only, spread and native shadow kernel/edge phase remain approximate.";
         field!("ADBE Drop Shadow-0005", "blurRadius", 0, Scale::Factor(0.5), 0.0, false, true)),
-    mapping!("ADBE Brightness & Contrast 2" => "brightnessContrast", "Legacy/HDR mode is not modeled.";
+    mapping!("ADBE Brightness & Contrast 2" => "brightnessContrast", "FX brightnessContrast keeps the native Brightness/Contrast units but renders its own kernel (contrast about 0.5 by 1 + Contrast/300, then HSV-value brightness); measured against After Effects 26.5 on an 8 bpc ramp it approximates the default mode (Use Legacy off: mean 3.9-11.8/255, max 24/255), not a render-equivalent mapping. Export writes Use Legacy off.";
         field!("ADBE Brightness & Contrast 2-0001", "brightness"), field!("ADBE Brightness & Contrast 2-0002", "contrast")),
     mapping!("ADBE HUE SATURATION" => "hueSaturation", "Only Master channel is represented; other channel ranges are unsupported. FX HSV Master transfer differs from Adobe's native Hue/Saturation on chromatic colors; static values are editable native approximations, not proven render-equivalent.";
         field!("ADBE HUE SATURATION-0004", "hue"), field!("ADBE HUE SATURATION-0005", "saturation"),
@@ -331,6 +331,9 @@ pub(crate) static ANIMATED_SATURATION: Mapping = mapping!("ADBE Vibrance" => "hu
     field!("ADBE Vibrance-0002", "saturation"));
 
 pub(crate) fn by_fx(fx_type: &str) -> Option<&'static Mapping> {
+    if let Some(mapping) = super::color_grades::export_mapping(fx_type) {
+        return Some(mapping);
+    }
     if fx_type == "temperatureTint" {
         return Some(&WHITE_BALANCE_TEMPERATURE);
     }
@@ -480,8 +483,9 @@ mod tests {
     #[test]
     fn vignette_mapping_is_export_only() {
         assert!(by_native("CS Vignette").is_none());
-        let export = by_fx("vignette").expect("historical FX Vignette export mapping");
-        assert_eq!(export.native, "CS Vignette");
+        let export = by_fx("vignette").expect("FX Vignette export mapping");
+        // Lumetri's Vignette section, not the earlier CC Vignette fallback.
+        assert_eq!(export.native, "ADBE Lumetri");
         assert_eq!(export.fx_type, "vignette");
         assert!(serde_json::from_value::<LayerEffect>(default_effect("vignette")).is_ok());
     }

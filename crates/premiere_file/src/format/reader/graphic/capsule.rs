@@ -330,8 +330,8 @@ mod tests {
         let retained =
             top_level_text_overrides(vec![child, supported], 1, "capsule", &mut omissions);
         assert_eq!(retained.len(), 1);
-        assert_eq!(retained[0].document.text.as_str(), "Supported title");
-        assert_eq!(retained[0].document.font_family.as_ref(), "ArialMT");
+        assert_eq!(retained[0].document.text, "Supported title");
+        assert_eq!(retained[0].document.font_family, "ArialMT");
         assert_eq!(omissions.len(), 1);
         assert!(omissions[0].reason.contains("child-text"));
         assert!(omissions[0].reason.contains("composition 3"));

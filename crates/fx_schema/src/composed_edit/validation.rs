@@ -6,7 +6,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::{
     pag_validation::{validate_pag_layer_references, validate_pag_layer_tree},
     property::{PropType, Property, PropertyTarget},
-    Layer, LayerId,
+    variables::check_variable_links,
+    Layer, LayerId, VariableError, VariableScope,
 };
 
 use super::{FXComposition, ValidationError};
@@ -21,6 +22,51 @@ pub(super) fn validate(composition: &FXComposition) -> Result<(), ValidationErro
     validate_media_placements_root(composition.layers())?;
     validate_graph_dependencies(composition)?;
     validate_graph_asset_metadata_sources(composition)?;
+    validate_variables(composition)?;
+    Ok(())
+}
+
+/// Every link must name a variable of its type that an enclosing Group or the
+/// composition defines.
+fn validate_variables(composition: &FXComposition) -> Result<(), ValidationError> {
+    let variables = composition.variables();
+    if let Some((name, target)) = variables
+        .iter()
+        .find_map(|(name, variable)| Some((name, variable.link()?)))
+    {
+        return Err(VariableError::Unresolved {
+            owner: format!("composition variable {name:?}"),
+            name: target.to_owned(),
+        }
+        .into());
+    }
+    validate_layer_variables(composition.layers(), &VariableScope::root(variables))
+}
+
+fn validate_layer_variables(
+    layers: &[Layer],
+    scope: &VariableScope,
+) -> Result<(), ValidationError> {
+    for layer in layers {
+        let owner = || format!("layer {} ({})", layer.id(), layer.layer_type_name());
+        let own = match layer.data().variables() {
+            Some(variables) => {
+                check_variable_links(scope, variables, owner)?;
+                scope.child(variables)
+            }
+            None => scope.clone(),
+        };
+        let mut checked = Ok(());
+        layer.data().for_each_own_link(&mut |link| {
+            if checked.is_ok() {
+                checked = link.check(&own, &owner);
+            }
+        });
+        checked?;
+        if let Some(children) = layer.child_layers() {
+            validate_layer_variables(children, &own)?;
+        }
+    }
     Ok(())
 }
 

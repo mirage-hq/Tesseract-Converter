@@ -349,11 +349,11 @@ fn capsule_picture_non_picture_occurrence_keeps_editable_image_sibling() {
     let asset = image.source.asset().unwrap();
     assert_eq!(archive.metadata().assets.len(), 1);
     assert_eq!(
-        archive.metadata().assets[asset.asset_id.as_str()].kind,
+        archive.metadata().assets[asset.asset_id.value().unwrap().as_str()].kind,
         tesseract_file::AssetKind::Image,
     );
     let bytes = archive
-        .asset(asset.asset_id.as_str())
+        .asset(asset.asset_id.value().unwrap().as_str())
         .unwrap()
         .read_verified_bytes(1024 * 1024)
         .unwrap();

@@ -293,3 +293,260 @@ fn object_mask_sampling_trigger_excludes_nonphysical_owners() {
         );
     }
 }
+
+fn fixture_xml(name: &str) -> String {
+    super::super::read_xml(
+        &Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures")
+            .join(name),
+    )
+    .unwrap()
+}
+
+/// Read one media record of `xml`, returning its identity and every report.
+fn read_clip_media(xml: &str, uid: &str) -> (String, Result<PrMedia>, Vec<Omission>) {
+    let graph = Graph::parse(xml).unwrap();
+    let record = graph.locate_uid(uid, "clip colour regression").unwrap();
+    let media = graph
+        .decode_as::<Media>(record, "clip colour regression")
+        .unwrap();
+    let identity = media.identity.clone();
+    let mut omissions = Vec::new();
+    let result = read_media(&graph, media, &mut omissions);
+    (identity, result, omissions)
+}
+
+fn interpret_footage_reports(omissions: &[Omission]) -> Vec<&Omission> {
+    omissions
+        .iter()
+        .filter(|omission| omission.reason.contains("Interpret Footage"))
+        .collect()
+}
+
+/// Premiere 25.6.6 saved `InputLUTSpecified=true` on the Version 21 picture
+/// stream (`VideoStream:887`) of `Dolby Digital Plus AV Sync.mp4` without any
+/// LUT path or ID; the H.264 stream `VideoStream:873` of the same save has `false`.
+#[test]
+fn pinned_premiere_25_clip_input_lut_is_reported_and_media_retained() {
+    let xml = fixture_xml("adobe_native_variable_speed_ramp_ppro25.prproj");
+    let (record, media, omissions) = read_clip_media(&xml, "be508f92-2679-48da-8d95-255b2f09bd86");
+    assert!(media.unwrap().video.is_some());
+    let reports = interpret_footage_reports(&omissions);
+    assert_eq!(reports.len(), 1, "{omissions:?}");
+    assert_eq!(reports[0].record, record);
+    assert_eq!(reports[0].scope, OmissionScope::Feature);
+    assert_eq!(reports[0].kind, crate::OmissionKind::Omitted);
+    assert!(
+        reports[0].reason.starts_with(
+            "Interpret Footage Input LUT (InputLUTSpecified, InputLUTID absent) not converted"
+        ) && reports[0]
+            .reason
+            .contains("inputEncoding jerboa:sdr-rec709-display:v1"),
+        "{}",
+        reports[0].reason
+    );
+
+    let (_, other, omissions) = read_clip_media(&xml, "11751c92-8dea-4404-9085-ffecede1decd");
+    assert!(other.unwrap().video.is_some());
+    assert!(
+        interpret_footage_reports(&omissions).is_empty(),
+        "{omissions:?}"
+    );
+}
+
+/// The Version 19 stream of `vhsvertical.prproj` (`VideoStream:275`) saves the
+/// four Interpret Footage fields at their unset values.
+fn vhs_stream_275(xml: &str, from: &str, to: &str) -> String {
+    let start = xml.find("<VideoStream ObjectID=\"275\"").unwrap();
+    let end = start + xml[start..].find("</VideoStream>").unwrap();
+    let stream = &xml[start..end];
+    assert_eq!(stream.matches(from).count(), 1, "{from}");
+    format!(
+        "{}{}{}",
+        &xml[..start],
+        stream.replace(from, to),
+        &xml[end..]
+    )
+}
+
+const VHS_MEDIA: &str = "c33ae484-d643-4f7d-9f07-ce27598fbbae";
+
+#[test]
+fn pinned_version_19_unset_interpret_footage_fields_report_nothing() {
+    let xml = fixture_xml("vhsvertical.prproj");
+    assert!(xml.contains(
+        "<SelectedColorSpace>{}</SelectedColorSpace>\n\t\t<OverriddenColorSpace>{}</OverriddenColorSpace>\n\t\t<InputLUTSpecified>false</InputLUTSpecified>\n\t\t<InputLUTID>00000000-0000-0000-0000-000000000000</InputLUTID>"
+    ));
+    let (_, media, omissions) = read_clip_media(&xml, VHS_MEDIA);
+    assert!(media.unwrap().video.is_some());
+    assert!(
+        interpret_footage_reports(&omissions).is_empty(),
+        "{omissions:?}"
+    );
+}
+
+/// Mutations of a pinned Version 19 stream: no committed Premiere project
+/// saves a non-empty override, so this is structural evidence of the
+/// classification, not of Premiere's saved spelling. A video's override with
+/// a registered camera encoding is retained for the document's colour
+/// management to map (`cameraInput` in ACES, a report in legacy); every
+/// other override is reported here.
+#[test]
+fn clip_color_space_override_names_the_equal_camera_encoding_or_reports_none() {
+    let xml = fixture_xml("vhsvertical.prproj");
+    let unset = "<OverriddenColorSpace>{}</OverriddenColorSpace>";
+    let profile = |name: &str| {
+        format!(
+            r#"<OverriddenColorSpace>{{"baseColorProfile":{{"colorProfileData":"AQAAAP////8=","colorProfileName":"{name}"}},"baseProfileType":1}}</OverriddenColorSpace>"#
+        )
+    };
+    for (to, expected) in [
+        (
+            profile("Sony S-Log3/S-Gamut3.Cine"),
+            Some("camera:sony-slog3-sgamut3-cine:v1"),
+        ),
+        (profile("Apple Log/Rec. 2020"), Some("camera:apple-log:v1")),
+        (
+            profile("Fuji F-Log/Rec. 2020"),
+            Some("no registered Tesseract camera encoding has the same curve"),
+        ),
+        (profile("BT.709,8-bit,Display-Referred"), None),
+        (
+            profile("BT.2100 PQ,10-bit,Display-Referred"),
+            Some("Color Space Override BT.2100 Pq not converted"),
+        ),
+        (
+            "<OverriddenColorSpace>[]</OverriddenColorSpace>".to_owned(),
+            Some("unrecognized Interpret Footage OverriddenColorSpace"),
+        ),
+        // Premiere 26.5.2 flags an active override; an explicit `false`
+        // keeps the saved label inactive.
+        (
+            format!(
+                "{}<IsColorSpacOverridden>true</IsColorSpacOverridden>",
+                profile("ARRI LogC4/Wide Gamut4")
+            ),
+            Some("camera:arri-logc4:v1"),
+        ),
+        (
+            format!(
+                "{}<IsColorSpacOverridden>false</IsColorSpacOverridden>",
+                profile("ARRI LogC4/Wide Gamut4")
+            ),
+            None,
+        ),
+    ] {
+        let changed = vhs_stream_275(&xml, unset, &to);
+        let (record, media, omissions) = read_clip_media(&changed, VHS_MEDIA);
+        let video = media.unwrap().video.unwrap();
+        let reports = interpret_footage_reports(&omissions);
+        if let Some(camera) = expected.filter(|expected| expected.starts_with("camera:")) {
+            let retained = video.camera_override.as_ref().expect(&to);
+            assert_eq!(retained.encoding, camera);
+            assert_eq!(retained.media_record, record);
+            assert!(reports.is_empty(), "{to}: {omissions:?}");
+            continue;
+        }
+        assert_eq!(video.camera_override, None, "{to}");
+        match expected {
+            None => assert!(reports.is_empty(), "{to}: {omissions:?}"),
+            Some(expected) => {
+                assert_eq!(reports.len(), 1, "{to}: {omissions:?}");
+                assert_eq!(reports[0].record, record);
+                assert_eq!(reports[0].scope, OmissionScope::Feature);
+                assert!(
+                    reports[0].reason.contains(expected),
+                    "{}",
+                    reports[0].reason
+                );
+            }
+        }
+    }
+}
+
+/// A BT.709 override is the legacy FX default only for an SDR source: on an
+/// HLG or PQ source Premiere shows the HDR bytes as Rec.709 while FX decodes
+/// them as BT.2100, so the override is reported. The source profiles are the
+/// Premiere 26.5.1 HDR `OriginalColorSpace` texts; the override and stream are
+/// mutations of the pinned Version 19 stream.
+#[test]
+fn clip_rec709_override_on_an_hdr_source_is_reported() {
+    let xml = fixture_xml("vhsvertical.prproj");
+    let unset = "<OverriddenColorSpace>{}</OverriddenColorSpace>";
+    let rec709 = r#"<OverriddenColorSpace>{"baseColorProfile":{"colorProfileData":"AQAAAP////8=","colorProfileName":"BT.709,8-bit,Display-Referred"},"baseProfileType":1}</OverriddenColorSpace>"#;
+    let original = |name: &str| {
+        format!(
+            r#"<OriginalColorSpace>{{"baseColorProfile":{{"colorProfileData":"AQAAAP////8=","colorProfileName":"{name}"}},"baseProfileType":1}}</OriginalColorSpace>"#
+        )
+    };
+    for (source, transfer) in [
+        ("BT.2100 HLG,10-bit,Display-Referred", Some("Hlg")),
+        ("BT.2100 PQ,10-bit,Display-Referred", Some("Pq")),
+        ("BT.709,32f,Display-Referred", None),
+    ] {
+        for (override_text, overridden) in [(rec709, true), (unset, false)] {
+            let changed =
+                vhs_stream_275(&xml, unset, &format!("{override_text}{}", original(source)));
+            let (record, media, omissions) = read_clip_media(&changed, VHS_MEDIA);
+            assert!(media.unwrap().video.is_some(), "{source}");
+            let reports = interpret_footage_reports(&omissions);
+            match transfer.filter(|_| overridden) {
+                None => assert!(reports.is_empty(), "{source}: {omissions:?}"),
+                Some(transfer) => {
+                    assert_eq!(reports.len(), 1, "{source}: {omissions:?}");
+                    assert_eq!(reports[0].record, record);
+                    assert_eq!(reports[0].scope, OmissionScope::Feature);
+                    assert_eq!(reports[0].kind, crate::OmissionKind::Omitted);
+                    assert!(
+                        reports[0].reason.starts_with(&format!(
+                            "Interpret Footage Color Space Override BT.709 on a BT.2100 {transfer} source not converted"
+                        )),
+                        "{}",
+                        reports[0].reason
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn clip_input_lut_with_camera_override_names_the_lut_input_encoding() {
+    let xml = fixture_xml("vhsvertical.prproj");
+    let changed = vhs_stream_275(
+        &xml,
+        "<OverriddenColorSpace>{}</OverriddenColorSpace>",
+        r#"<OverriddenColorSpace>{"baseColorProfile":{"colorProfileData":"AQAAAP////8=","colorProfileName":"Panasonic V-Log/V-Gamut"},"baseProfileType":1}</OverriddenColorSpace>"#,
+    );
+    let changed = vhs_stream_275(
+        &changed,
+        "<InputLUTSpecified>false</InputLUTSpecified>\n\t\t<InputLUTID>00000000-0000-0000-0000-000000000000</InputLUTID>",
+        "<InputLUTSpecified>true</InputLUTSpecified>\n\t\t<InputLUTID>6f1c2a3b-0000-4000-8000-000000000001</InputLUTID>",
+    );
+    let changed = vhs_stream_275(
+        &changed,
+        "<SelectedColorSpace>{}</SelectedColorSpace>",
+        r#"<SelectedColorSpace>{"selected":1}</SelectedColorSpace>"#,
+    );
+    let (_, media, omissions) = read_clip_media(&changed, VHS_MEDIA);
+    // Without decodable LUT samples the camera override is retained for the
+    // document's colour management, like an override without a LUT.
+    let video = media.unwrap().video.unwrap();
+    assert_eq!(
+        video.camera_override.map(|camera| camera.encoding),
+        Some("camera:panasonic-vlog:v1")
+    );
+    let reasons: Vec<_> = interpret_footage_reports(&omissions)
+        .into_iter()
+        .map(|omission| omission.reason.as_str())
+        .collect();
+    assert_eq!(reasons.len(), 2, "{reasons:?}");
+    assert!(reasons[0].starts_with("Interpret Footage SelectedColorSpace"));
+    assert!(
+        reasons[1].starts_with(
+            "Interpret Footage Input LUT (InputLUTSpecified, InputLUTID 6f1c2a3b-0000-4000-8000-000000000001) not converted"
+        ) && reasons[1].contains("inputEncoding camera:panasonic-vlog:v1"),
+        "{}",
+        reasons[1]
+    );
+}

@@ -53,17 +53,20 @@ fn admitted<'a>(
                     | PrEffectParams::Noise { .. }
                     | PrEffectParams::ModernNoise { .. }
                     | PrEffectParams::BrightnessContrast(_)
-                    | PrEffectParams::LumetriExposure(_)
-                    | PrEffectParams::LumetriTemperature(_)
-                    | PrEffectParams::LumetriTint(_)
-                    | PrEffectParams::LumetriSaturation(_)
-                    | PrEffectParams::LumetriVignette(_) => true,
+                    | PrEffectParams::LumetriGrade(_)
+                    | PrEffectParams::LumetriVignette(_)
+                    | PrEffectParams::LumetriCurves(_)
+                    | PrEffectParams::LumetriWheels(_)
+                    | PrEffectParams::LumetriHueCurves(_)
+                    | PrEffectParams::LumetriInputLut(_)
+                    | PrEffectParams::LumetriLook(_) => true,
                     PrEffectParams::CornerPin(_)
                     | PrEffectParams::DirectionalBlur(_)
                     | PrEffectParams::FilmImpactDirectionalBlur(_)
                     | PrEffectParams::Levels(_)
                     | PrEffectParams::Offset(_)
-                    | PrEffectParams::ProcAmpBrightness(_)
+                    | PrEffectParams::ProcAmp(_)
+                    | PrEffectParams::GammaCorrection(_)
                     | PrEffectParams::DropShadow { .. }
                     | PrEffectParams::Invert(_)
                     | PrEffectParams::FindEdges(_)

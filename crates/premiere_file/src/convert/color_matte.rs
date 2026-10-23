@@ -38,7 +38,7 @@ use std::collections::BTreeSet;
 /// the implicit canvas shape in another colour.
 fn solid_shape(width: u32, height: u32, fill_color: [f64; 4]) -> RectShape {
     RectShape {
-        fill_color,
+        fill_color: fill_color.into(),
         ..super::background::black_shape(width, height)
     }
 }
@@ -127,17 +127,18 @@ fn solid_fill_matte(
     height: u32,
     animated: bool,
 ) -> Option<PrColorMatte> {
+    let fill_color = *rect.rect.fill_color.value()?;
     let plain = !animated
         && rect.parent == parent
         && rect.masks.is_empty()
         && rect.effects.is_empty()
         && !rect.motion_blur
         && neutral_transforms(width, height).contains(&rect.transform)
-        && solid_shape(width, height, rect.rect.fill_color) == rect.rect;
+        && solid_shape(width, height, fill_color) == rect.rect;
     if !plain {
         return None;
     }
-    PrColorMatte::from_fill_color(rect.rect.fill_color).ok()
+    PrColorMatte::from_fill_color(fill_color).ok()
 }
 
 /// The Color Matte that `rect`, a layer of `parent`'s list, exports as, if it
@@ -159,16 +160,18 @@ pub(super) fn exported_matte(
     let animated = context.property_tracks.contains_key(&rect.id);
     let dissolve = super::cross_dissolve::matte_animation(rect, context).is_some();
     let mut normalized = rect.clone();
+    let mut fill_color = *rect.rect.fill_color.value()?;
     if dissolve {
         normalized.transform.opacity = identity_transform().opacity;
-        normalized.rect.fill_color[3] = 1.0;
+        fill_color[3] = 1.0;
     } else if !animated
         && rect.blend_mode == BlendMode::Normal
-        && (0.0..=1.0).contains(&rect.rect.fill_color[3])
+        && (0.0..=1.0).contains(&fill_color[3])
     {
         // One plain fill has no overlapping paints: its alpha is clip Opacity.
-        normalized.rect.fill_color[3] = 1.0;
+        fill_color[3] = 1.0;
     }
+    normalized.rect.fill_color = fill_color.into();
     solid_fill_matte(&normalized, parent, width, height, animated && !dissolve)
         .filter(|_| !consumed.contains(&rect.id))
 }
@@ -295,13 +298,16 @@ pub(super) fn rect_as_shape(rect: &RectLayer) -> ShapeLayer {
     let shape = &rect.rect;
     let fill = shape.fill_enabled.then(|| ShapeFillStyle {
         paint: shape.fill_paint.clone().unwrap_or(ShapePaint::Solid {
-            color: shape.fill_color,
+            color: shape.fill_color.clone(),
         }),
+        fill_rule: Default::default(),
         blend_mode: shape.fill_blend_mode.unwrap_or_default(),
-        ..ShapeFillStyle::solid(shape.fill_color)
+        opacity: 1.0,
     });
     let stroke = shape
         .stroke_color
+        .as_ref()
+        .and_then(|color| color.value().copied())
         .filter(|_| shape.stroke_enabled && shape.stroke_width.value() > 0.0)
         .map(|color| ShapeStrokeStyle {
             join: shape.stroke_join,
@@ -356,10 +362,11 @@ fn approximate_unexported_gradient(shape: &mut ShapeLayer, rect: &RectShape) -> 
     else {
         return None;
     };
+    let fill_color = *rect.fill_color.value()?;
     let reason = unexported_gradient(shape)?;
     for fill in &mut shape.shape.fills {
         fill.paint = ShapePaint::Solid {
-            color: rect.fill_color,
+            color: fill_color.into(),
         };
     }
     let kind = match gradient_type {
@@ -370,7 +377,7 @@ fn approximate_unexported_gradient(shape: &mut ShapeLayer, rect: &RectShape) -> 
     };
     let difference = stops
         .iter()
-        .flat_map(|stop| stop.color.iter().zip(rect.fill_color))
+        .flat_map(|stop| stop.color.iter().zip(fill_color))
         .fold(0.0_f64, |largest, (stop, fill)| {
             largest.max((stop - fill).abs())
         });
@@ -407,7 +414,10 @@ pub(super) fn export_rect_layer(
     record: &str,
 ) -> Result<Option<PrVideoItem>> {
     let (width, height, frame_rate) = (context.width, context.height, context.frame_rate);
-    let Some(matte) = exported_matte(rect, parent, consumed, context, [width, height]) else {
+    let (Some(matte), Some(fill_color)) = (
+        exported_matte(rect, parent, consumed, context, [width, height]),
+        rect.rect.fill_color.value(),
+    ) else {
         let mut shape = rect_as_shape(rect);
         let approximation = approximate_unexported_gradient(&mut shape, &rect.rect);
         let graphic = export_object(
@@ -482,7 +492,7 @@ pub(super) fn export_rect_layer(
         opacity: if animation.is_some() {
             100.0
         } else {
-            rect.rect.fill_color[3] * 100.0
+            fill_color[3] * 100.0
         },
         animations: animation
             .into_iter()
@@ -507,6 +517,8 @@ pub(super) fn export_rect_layer(
             width,
             height,
             kind: PrMediaKind::ColorMatte(matte),
+            input_lut: None,
+            camera_override: None,
         }),
         audio: None,
     };

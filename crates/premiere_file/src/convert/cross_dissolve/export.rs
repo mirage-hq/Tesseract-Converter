@@ -123,7 +123,8 @@ pub(in crate::convert) fn matte_animation(
     context: &LayerExport<'_, '_>,
 ) -> Option<Vec<PrScalarKeyframe>> {
     let tracks = export::layer_tracks(context.dynamics, rect.id, |_| true)?;
-    if tracks.len() != 1 || !(0.0..=1.0).contains(&rect.rect.fill_color[3]) {
+    let alpha = rect.rect.fill_color.value()?[3];
+    if tracks.len() != 1 || !(0.0..=1.0).contains(&alpha) {
         return None;
     }
     let track = tracks.get(&PropType::Opacity)?;
@@ -144,7 +145,7 @@ pub(in crate::convert) fn matte_animation(
                     .frame_rate
                     .generator_in_ticks()
                     .checked_add(time.checked_mul(TICKS_PER_MILLISECOND)?)?,
-                value: value * rect.rect.fill_color[3],
+                value: value * alpha,
                 easing: PrKeyframeEasing::Linear,
             })
         })

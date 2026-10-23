@@ -69,7 +69,7 @@ pub(super) fn normalize_single_paint(
                 return None;
             }
             let opaque = match paint {
-                ShapePaint::Solid { color } => color[3] == 1.0,
+                ShapePaint::Solid { color } => color.value().is_some_and(|color| color[3] == 1.0),
                 ShapePaint::Gradient { stops, .. } => {
                     !stops.is_empty() && stops.iter().all(|stop| stop.color[3] == 1.0)
                 }
@@ -203,6 +203,9 @@ pub(super) fn fold(contents: &mut [VectorContent]) -> Result<bool, &'static str>
         }
         let alpha = match paint {
             ShapePaint::Solid { color } => {
+                let fx_schema::Linkable::Value(color) = color else {
+                    return Err("Shape paint alpha cannot be folded into native paint Opacity");
+                };
                 let alpha = color[3];
                 if !alpha.is_finite() || !(0.0..=1.0).contains(&alpha) {
                     return Err("Shape paint alpha cannot be folded into native paint Opacity");

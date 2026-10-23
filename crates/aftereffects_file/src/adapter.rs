@@ -25,6 +25,7 @@ use crate::{
     },
 };
 
+mod apply_color_lut;
 mod diagnostics;
 mod export;
 mod fonts;
@@ -344,6 +345,8 @@ struct ImportBuild<'a> {
     // Normalized PSD PNGs are temporary files owned by preflight. Keep them
     // alive through archive validation/writing, including partial field moves.
     _media_guard: media::MediaPreflight<'a>,
+    // Temporary .cube files backing imported Apply Color LUT assets.
+    _lut_guard: apply_color_lut::ImportedLuts,
 }
 
 fn import_builder<'a>(
@@ -386,18 +389,21 @@ fn import_builder_with_media_map<'a>(
     if let Some(error) = preflight.failure.take() {
         return Err(error);
     }
+    let luts = apply_color_lut::ImportedLuts::prepare(project, converted.document.composition())?;
     let builder = compact_archive(
         converted.document,
         available_fonts,
         &mut converted.diagnostics,
     )?;
     let builder = preflight.add_used_assets(builder, &converted.assets)?;
+    let builder = luts.add_to(builder, &mut Default::default())?;
     converted.diagnostics.append(&mut preflight.diagnostics);
     builder.validate()?;
     Ok(ImportBuild {
         builder,
         diagnostics: converted.diagnostics,
         _media_guard: preflight,
+        _lut_guard: luts,
     })
 }
 

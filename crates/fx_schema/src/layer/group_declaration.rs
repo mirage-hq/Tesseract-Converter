@@ -19,6 +19,8 @@ macro_rules! define_wire_group_layer_schema {
             #[serde(default)]
             description: String,
             #[serde(default)]
+            variables: $crate::Variables,
+            #[serde(default)]
             is_hidden: bool,
             parent: Option<LayerId>,
             #[serde(default)]
@@ -108,6 +110,12 @@ macro_rules! define_group_layer_schema {
             /// Optional user-visible description for the layer.
             #[serde(default, skip_serializing_if = "String::is_empty")]
             pub description: String,
+            /// Typed values that properties inside this Group, and the Group's
+            /// own properties, can link to by name. A variable may
+            /// itself link to a variable of an enclosing Group or the composition.
+            #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+            #[ts(optional, type = "Record<string, VariableValue | VariableLink>")]
+            pub variables: $crate::Variables,
             /// Whether this layer and its descendants are excluded from all output.
             #[serde(default, skip_serializing_if = "std::ops::Not::not")]
             pub is_hidden: bool,

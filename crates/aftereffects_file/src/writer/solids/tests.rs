@@ -649,8 +649,9 @@ fn invalid_solids_are_rejected_before_any_project_is_published() {
             color: [f32::NAN, 0.0, 0.0],
             ..solid()
         },
+        // Components above 1.0 are 32 bpc super-white (HDR export); negative is invalid.
         SolidLayerSpec {
-            color: [1.1, 0.0, 0.0],
+            color: [-0.1, 0.0, 0.0],
             ..solid()
         },
         SolidLayerSpec {

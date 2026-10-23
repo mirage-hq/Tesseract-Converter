@@ -22,6 +22,8 @@ use crate::schema::{
 };
 use base64::{engine::general_purpose::STANDARD, Engine};
 
+mod lumetri;
+
 /// Component `ID` of the first standard effect in a chain. Motion and Opacity
 /// own IDs 1 and 2 (`DefaultMotionComponentID`, `DefaultOpacityComponentID`).
 /// Corpus chains number their first standard effect 3 (140 chains) or 4 (76
@@ -37,6 +39,23 @@ const FIRST_EFFECT_COMPONENT_ID: usize = 4;
 pub(super) fn records(effects: &[PrEffect], ids: &[EffectIds]) -> Result<Vec<Record>> {
     let mut output = Vec::new();
     for (position, (effect, ids)) in effects.iter().zip(ids).enumerate() {
+        if matches!(
+            effect.params,
+            PrEffectParams::LumetriGrade(_)
+                | PrEffectParams::LumetriVignette(_)
+                | PrEffectParams::LumetriCurves(_)
+                | PrEffectParams::LumetriWheels(_)
+                | PrEffectParams::LumetriHueCurves(_)
+                | PrEffectParams::LumetriInputLut(_)
+                | PrEffectParams::LumetriLook(_)
+        ) {
+            output.extend(lumetri::records(
+                effect,
+                ids,
+                FIRST_EFFECT_COMPONENT_ID + position,
+            )?);
+            continue;
+        }
         ensure_valid!(
             !matches!(effect.params, PrEffectParams::LensDistortion(_)) || effect.enabled,
             "bypassed Lens Distortion has no established native wire form"
@@ -108,165 +127,171 @@ pub(super) fn records(effects: &[PrEffect], ids: &[EffectIds]) -> Result<Vec<Rec
             output.extend(super::mask::records(mask, ids)?);
         }
         // Static values in the native `Params` order of `spec`.
-        let values = match &effect.params {
-            PrEffectParams::DropShadow { .. } => {
-                return Err(crate::format::invalid(
-                    "native Drop Shadow import replacement has no native writer",
-                ));
-            }
-            PrEffectParams::ProcAmpBrightness(_) => {
-                return Err(crate::format::invalid(
-                    "ProcAmp replacement must export edited Exposure through the linked-AEP route",
-                ))
-            }
-            PrEffectParams::UltraKey(_) => {
-                return Err(crate::format::invalid("Ultra Key surrogate is import-only"));
-            }
-            PrEffectParams::Offset(_) => {
-                return Err(crate::format::invalid(
-                    "Offset replacement must export edited MotionTile through the linked-AEP route",
-                ))
-            }
-            PrEffectParams::LumetriExposure(_)
-            | PrEffectParams::LumetriSaturation(_)
-            | PrEffectParams::LumetriVignette(_)
-            | PrEffectParams::LumetriTemperature(_)
-            | PrEffectParams::LumetriTint(_) => {
-                return Err(crate::format::invalid("saved Lumetri replacements must export from edited FX through the linked-AEP route"));
-            }
-            PrEffectParams::AlphaGlow {
-                size,
-                brightness,
-                color,
-            } => vec![
-                size.to_string(),
-                brightness.to_string(),
-                color.native().to_string(),
-                color.native().to_string(),
-                "false".to_owned(),
-                "true".to_owned(),
-            ],
-            PrEffectParams::GaussianBlur(blur) => vec![
-                native_number(blur.blurriness),
-                BLUR_DIMENSIONS_HORIZONTAL_AND_VERTICAL.to_owned(),
-                blur.repeat_edge_pixels.to_string(),
-            ],
-            PrEffectParams::FilmImpactBlur(blur) => {
-                film_impact_values(spec, &FILM_IMPACT_BLUR_DEFAULTS, |param| {
-                    if param.id == FILM_IMPACT_BLUR_AMOUNT.id {
-                        Some(native_number(blur.amount))
-                    } else if param.id == FILM_IMPACT_BLUR_EDGE.id {
-                        Some(if blur.repeat_edge_pixels { "1" } else { "2" }.to_owned())
-                    } else {
-                        None
-                    }
-                })
-            }
-            PrEffectParams::FilmImpactDirectionalBlur(blur) => {
-                film_impact_values(spec, &FILM_IMPACT_DIRECTIONAL_BLUR_DEFAULTS, |param| {
-                    if param.id == FILM_IMPACT_BLUR_ANGLE.id {
-                        Some(native_number(blur.angle))
-                    } else if param.id == FILM_IMPACT_BLUR_AMOUNT.id {
-                        Some(native_number(blur.amount))
-                    } else if param.id == FILM_IMPACT_BLUR_EDGE.id {
-                        Some("2".to_owned())
-                    } else {
-                        None
-                    }
-                })
-            }
-            PrEffectParams::CornerPin(pin) => pin
-                .corners
-                .iter()
-                .map(|[x, y]| format!("{x}:{y}"))
-                .collect(),
-            PrEffectParams::DirectionalBlur(blur) => vec![
-                native_number(blur.direction),
-                native_number(blur.blur_length),
-            ],
-            PrEffectParams::Levels(levels) => {
-                levels.start_values().iter().map(f64::to_string).collect()
-            }
-            PrEffectParams::BrightnessContrast(values) => vec![
-                native_number(values.brightness),
-                native_number(values.contrast),
-            ],
-            // Without Invert's opaque private data (`EffectSpec::opaque_private_data`).
-            PrEffectParams::Invert(invert) => {
-                vec![invert.channel.to_string(), native_number(invert.blend)]
-            }
-            PrEffectParams::FindEdges(edges) => {
-                vec![edges.invert.to_string(), native_number(edges.blend)]
-            }
-            PrEffectParams::Tint(tint) => vec![
-                tint.black.native().to_string(),
-                tint.white.native().to_string(),
-                native_number(tint.amount),
-            ],
-            PrEffectParams::BlackWhite => Vec::new(),
-            PrEffectParams::Noise { amount } | PrEffectParams::ModernNoise { amount, .. } => {
-                vec![native_number(*amount), "true".to_owned(), "true".to_owned()]
-            }
-            PrEffectParams::LensDistortion(curvature) => vec![
-                native_number(*curvature),
-                "0".to_owned(),
-                "0".to_owned(),
-                "0".to_owned(),
-                "0".to_owned(),
-                "true".to_owned(),
-                crate::schema::PrColour::BLACK.native().to_string(),
-            ],
-            // Scatter has no retained FX control.
-            PrEffectParams::Ramp(ramp) => vec![
-                format!("{}:{}", ramp.start[0], ramp.start[1]),
-                ramp.start_colour.native().to_string(),
-                format!("{}:{}", ramp.end[0], ramp.end[1]),
-                ramp.end_colour.native().to_string(),
-                if ramp.radial { "1" } else { RAMP_SHAPE_LINEAR }.to_owned(),
-                native_number(0.0),
-                native_number(ramp.blend),
-            ],
-            // Whole counts, as Premiere writes them, and Sharp Colors on.
-            PrEffectParams::Mosaic(mosaic) => vec![
-                mosaic.horizontal.to_string(),
-                mosaic.vertical.to_string(),
-                mosaic.sharp_colors.to_string(),
-            ],
-            // A whole Count, as Premiere 26.5.1 writes it.
-            PrEffectParams::Replicate(replicate) => vec![replicate.count.to_string()],
-            PrEffectParams::Sharpen(sharpen) => vec![sharpen.amount.to_string()],
-            PrEffectParams::LegacyLuma { threshold, cutoff } => {
-                vec![native_number(*threshold), native_number(*cutoff)]
-            }
-            // A whole Level, as Premiere writes this float (`7.`).
-            PrEffectParams::Posterize(posterize) => {
-                vec![native_number(f64::from(posterize.level))]
-            }
-            PrEffectParams::PosterizeTime { frame_rate } => vec![native_number(*frame_rate)],
-            PrEffectParams::Transform(transform)
-            | PrEffectParams::AdjustmentGeometry2(transform) => vec![
-                format!(
-                    "{}:{}",
-                    transform.anchor_point[0], transform.anchor_point[1]
-                ),
-                format!("{}:{}", transform.position[0], transform.position[1]),
-                transform.uniform_scale.to_string(),
-                native_number(transform.scale_height),
-                native_number(transform.scale_width),
-                native_number(transform.skew),
-                native_number(transform.skew_axis),
-                native_number(transform.rotation),
-                native_number(transform.opacity),
-                transform.composition_shutter_angle.to_string(),
-                native_number(transform.shutter_angle),
-                if transform.bicubic_sampling {
-                    TRANSFORM_SAMPLING_BICUBIC
-                } else {
-                    TRANSFORM_SAMPLING_BILINEAR
+        let values =
+            match &effect.params {
+                PrEffectParams::DropShadow { .. } => {
+                    return Err(crate::format::invalid(
+                        "native Drop Shadow import replacement has no native writer",
+                    ));
                 }
-                .to_owned(),
-            ],
-        };
+                PrEffectParams::ProcAmp(proc_amp) => proc_amp
+                    .values()
+                    .iter()
+                    .map(|value| native_number(*value))
+                    .chain(["false".to_owned(), native_number(50.0)])
+                    .collect(),
+                // A whole Gamma, as Premiere 26.5.2 writes it (`10`).
+                PrEffectParams::GammaCorrection(gamma) => vec![gamma.to_string()],
+                PrEffectParams::UltraKey(_) => {
+                    return Err(crate::format::invalid("Ultra Key surrogate is import-only"));
+                }
+                PrEffectParams::Offset(_) => return Err(crate::format::invalid(
+                    "Offset replacement must export edited MotionTile through the linked-AEP route",
+                )),
+                PrEffectParams::LumetriGrade(_)
+                | PrEffectParams::LumetriVignette(_)
+                | PrEffectParams::LumetriCurves(_)
+                | PrEffectParams::LumetriWheels(_)
+                | PrEffectParams::LumetriHueCurves(_)
+                | PrEffectParams::LumetriInputLut(_)
+                | PrEffectParams::LumetriLook(_) => {
+                    return Err(crate::format::invalid(
+                        "Lumetri Color is written by its own layout writer",
+                    ));
+                }
+                PrEffectParams::AlphaGlow {
+                    size,
+                    brightness,
+                    color,
+                } => vec![
+                    size.to_string(),
+                    brightness.to_string(),
+                    color.native().to_string(),
+                    color.native().to_string(),
+                    "false".to_owned(),
+                    "true".to_owned(),
+                ],
+                PrEffectParams::GaussianBlur(blur) => vec![
+                    native_number(blur.blurriness),
+                    BLUR_DIMENSIONS_HORIZONTAL_AND_VERTICAL.to_owned(),
+                    blur.repeat_edge_pixels.to_string(),
+                ],
+                PrEffectParams::FilmImpactBlur(blur) => {
+                    film_impact_values(spec, &FILM_IMPACT_BLUR_DEFAULTS, |param| {
+                        if param.id == FILM_IMPACT_BLUR_AMOUNT.id {
+                            Some(native_number(blur.amount))
+                        } else if param.id == FILM_IMPACT_BLUR_EDGE.id {
+                            Some(if blur.repeat_edge_pixels { "1" } else { "2" }.to_owned())
+                        } else {
+                            None
+                        }
+                    })
+                }
+                PrEffectParams::FilmImpactDirectionalBlur(blur) => {
+                    film_impact_values(spec, &FILM_IMPACT_DIRECTIONAL_BLUR_DEFAULTS, |param| {
+                        if param.id == FILM_IMPACT_BLUR_ANGLE.id {
+                            Some(native_number(blur.angle))
+                        } else if param.id == FILM_IMPACT_BLUR_AMOUNT.id {
+                            Some(native_number(blur.amount))
+                        } else if param.id == FILM_IMPACT_BLUR_EDGE.id {
+                            Some("2".to_owned())
+                        } else {
+                            None
+                        }
+                    })
+                }
+                PrEffectParams::CornerPin(pin) => pin
+                    .corners
+                    .iter()
+                    .map(|[x, y]| format!("{x}:{y}"))
+                    .collect(),
+                PrEffectParams::DirectionalBlur(blur) => vec![
+                    native_number(blur.direction),
+                    native_number(blur.blur_length),
+                ],
+                PrEffectParams::Levels(levels) => {
+                    levels.start_values().iter().map(f64::to_string).collect()
+                }
+                PrEffectParams::BrightnessContrast(values) => vec![
+                    native_number(values.brightness),
+                    native_number(values.contrast),
+                ],
+                // Without Invert's opaque private data (`EffectSpec::opaque_private_data`).
+                PrEffectParams::Invert(invert) => {
+                    vec![invert.channel.to_string(), native_number(invert.blend)]
+                }
+                PrEffectParams::FindEdges(edges) => {
+                    vec![edges.invert.to_string(), native_number(edges.blend)]
+                }
+                PrEffectParams::Tint(tint) => vec![
+                    tint.black.native().to_string(),
+                    tint.white.native().to_string(),
+                    native_number(tint.amount),
+                ],
+                PrEffectParams::BlackWhite => Vec::new(),
+                PrEffectParams::Noise { amount } | PrEffectParams::ModernNoise { amount, .. } => {
+                    vec![native_number(*amount), "true".to_owned(), "true".to_owned()]
+                }
+                PrEffectParams::LensDistortion(curvature) => vec![
+                    native_number(*curvature),
+                    "0".to_owned(),
+                    "0".to_owned(),
+                    "0".to_owned(),
+                    "0".to_owned(),
+                    "true".to_owned(),
+                    crate::schema::PrColour::BLACK.native().to_string(),
+                ],
+                // Scatter has no retained FX control.
+                PrEffectParams::Ramp(ramp) => vec![
+                    format!("{}:{}", ramp.start[0], ramp.start[1]),
+                    ramp.start_colour.native().to_string(),
+                    format!("{}:{}", ramp.end[0], ramp.end[1]),
+                    ramp.end_colour.native().to_string(),
+                    if ramp.radial { "1" } else { RAMP_SHAPE_LINEAR }.to_owned(),
+                    native_number(0.0),
+                    native_number(ramp.blend),
+                ],
+                // Whole counts, as Premiere writes them, and Sharp Colors on.
+                PrEffectParams::Mosaic(mosaic) => vec![
+                    mosaic.horizontal.to_string(),
+                    mosaic.vertical.to_string(),
+                    mosaic.sharp_colors.to_string(),
+                ],
+                // A whole Count, as Premiere 26.5.1 writes it.
+                PrEffectParams::Replicate(replicate) => vec![replicate.count.to_string()],
+                PrEffectParams::Sharpen(sharpen) => vec![sharpen.amount.to_string()],
+                PrEffectParams::LegacyLuma { threshold, cutoff } => {
+                    vec![native_number(*threshold), native_number(*cutoff)]
+                }
+                // A whole Level, as Premiere writes this float (`7.`).
+                PrEffectParams::Posterize(posterize) => {
+                    vec![native_number(f64::from(posterize.level))]
+                }
+                PrEffectParams::PosterizeTime { frame_rate } => vec![native_number(*frame_rate)],
+                PrEffectParams::Transform(transform)
+                | PrEffectParams::AdjustmentGeometry2(transform) => vec![
+                    format!(
+                        "{}:{}",
+                        transform.anchor_point[0], transform.anchor_point[1]
+                    ),
+                    format!("{}:{}", transform.position[0], transform.position[1]),
+                    transform.uniform_scale.to_string(),
+                    native_number(transform.scale_height),
+                    native_number(transform.scale_width),
+                    native_number(transform.skew),
+                    native_number(transform.skew_axis),
+                    native_number(transform.rotation),
+                    native_number(transform.opacity),
+                    transform.composition_shutter_angle.to_string(),
+                    native_number(transform.shutter_angle),
+                    if transform.bicubic_sampling {
+                        TRANSFORM_SAMPLING_BICUBIC
+                    } else {
+                        TRANSFORM_SAMPLING_BILINEAR
+                    }
+                    .to_owned(),
+                ],
+            };
         for ((&object_id, param), value) in ids.params.iter().zip(spec.params).zip(values) {
             let keys = effect.keys(param);
             if param.record.tag == records::POINT_COMPONENT_PARAM.tag {
@@ -338,11 +363,14 @@ pub(super) fn records(effects: &[PrEffect], ids: &[EffectIds]) -> Result<Vec<Rec
 /// as Premiere 26.5.1 saves it. Its `BinaryHash` is a random
 /// UUID, as for file media (inferred).
 fn levels_private_data(effect: &PrEffect) -> Result<Option<RetainedOrSkipped<MotionPrivateData>>> {
-    let PrEffectParams::Levels(levels) = &effect.params else {
-        return Ok(None);
+    let values: Vec<f64> = match &effect.params {
+        PrEffectParams::Levels(levels) => levels.start_values().to_vec(),
+        // Gamma Correction saves its Gamma the same way (`CgA=` for 10).
+        PrEffectParams::GammaCorrection(gamma) => vec![*gamma],
+        _ => return Ok(None),
     };
-    let mut bytes = Vec::with_capacity(40);
-    for value in levels.start_values() {
+    let mut bytes = Vec::with_capacity(2 * values.len());
+    for value in values {
         // Export rounds every Levels value to a whole native value.
         ensure_valid!(
             value.fract() == 0.0 && (0.0..=f64::from(u16::MAX)).contains(&value),

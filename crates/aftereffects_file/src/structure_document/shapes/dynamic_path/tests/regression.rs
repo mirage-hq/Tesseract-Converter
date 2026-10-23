@@ -124,6 +124,7 @@ fn source_relative_solid_anchors_share_static_keyed_and_null_units() {
         })),
         media: None,
         native_media: None,
+        ocio_input: None,
     };
     let anchor_dimensions = source_anchor_dimensions(Some(&source), &solid_layer);
     let static_anchor = NumericProperty {

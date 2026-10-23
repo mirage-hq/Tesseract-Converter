@@ -519,7 +519,9 @@ impl PrNestOccurrence {
         // group does not export and such a native placement does not import.
         ensure_valid!(
             self.playback_rate < 0.0 || self.time_remap.is_some()
-                || self.out_ticks <= inner.end_ticks(),
+                || self.out_ticks <= inner.end_ticks()
+                // An empty template placeholder has no picture to run past.
+                || inner.empty_template_placeholder,
             "out point {} ticks is past the {} tick end of nested sequence {:?}; a placement longer than its nested sequence is not supported",
             self.out_ticks,
             inner.end_ticks(),
@@ -651,7 +653,9 @@ impl PrSequence {
                     }
                 });
                 inner.retain_nested_media(omitted, omissions);
-                let keep = inner.video_items().next().is_some()
+                // An empty template placeholder had no content to drop.
+                let keep = inner.empty_template_placeholder
+                    || inner.video_items().next().is_some()
                     || inner.nest_occurrences().next().is_some()
                     || !inner.audio.is_empty();
                 if !keep {

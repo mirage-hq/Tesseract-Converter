@@ -252,6 +252,7 @@ fn straight_position_edited_export_keeps_linear_traversal() {
     source.video.as_mut().unwrap().kind = crate::schema::PrMediaKind::Video {
         codec: Some(crate::schema::VideoCodec::H264),
         hdr_profile: None,
+        color_space_override: None,
     };
     let project = crate::format::PrProjectFile::from_sequences(vec![sequence], media);
     let temp = tempfile::tempdir().unwrap();

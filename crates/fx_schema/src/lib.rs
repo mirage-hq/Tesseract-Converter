@@ -19,6 +19,7 @@ pub use color_management::{
 pub mod editable_document;
 pub mod effect;
 mod snapshot;
+pub mod static_fonts;
 mod stored;
 pub mod text_animator;
 
@@ -49,11 +50,17 @@ pub mod property;
 pub mod time;
 pub mod time_remap;
 mod time_remap_declaration;
+pub mod variables;
 pub use effect::{
     EffectData, EffectParam, EffectPayload, EffectRecord, EffectTextureInput, LayerEffect,
 };
 pub use time_remap::{
     TimeRemapError, TimeRemapExtrapolation, TimeRemapKeyframe, TimeRemapProperty,
+};
+pub use variables::{
+    deserialize_linkable_extended_color, deserialize_optional_linkable_extended_color, LinkSlot,
+    LinkTarget, Linkable, NumberProperty, VariableError, VariableLink, VariableName, VariableScope,
+    VariableType, VariableValue, Variables,
 };
 
 pub use asset_metadata::{
@@ -90,7 +97,7 @@ pub use layer::{
     AiEditBackground, AiEditLayer, AiEditSticker, AiEditStickerContent, AiEditStickerLocation,
     AiEditStickerPoint, AnchorPointGrouping, AudioLayer, AudioLayerMetadata, AudioLayerModality,
     AudioLayerSource, AudioSource, AudioSourceEnhancement, BevelDirection, BevelEmbossStyle,
-    BevelStyle, BevelTechnique, BlendMode, BooleanOp, BooleanOperationLayer, DropShadow,
+    BevelStyle, BevelTechnique, BlendMode, BooleanOp, BooleanOperationLayer, BoxFit, DropShadow,
     FiniteVec2, FontVariations, FrameBlendingMode, FxPagImageRef, FxPagItemDuration,
     FxPagItemDurationType, FxPagLayerConfig, FxPagLayerConfigEntry, FxPagLayerConfigSolid,
     FxPagLayerConfigText, FxPagSequenceItem, FxPagSlots, FxPagVideoRef, GlowSource,
@@ -122,7 +129,7 @@ pub use time::{Duration, Time, TimeOffset, TimeRange};
 pub const FX_COMPOSITION_SCHEMA: &str = include_str!("../fx_composition.schema.json");
 
 /// FX composition schema revision.
-pub const FX_SCHEMA_REVISION: u8 = 77;
+pub const FX_SCHEMA_REVISION: u8 = 80;
 
 /// Backward-compatible schema revision name.
 pub const SCHEMA_VERSION: u8 = FX_SCHEMA_REVISION;

@@ -8,7 +8,7 @@ use fx_schema::layer::{BlendMode, ShapeFillRule};
 fn fill(alpha: f64) -> VectorContent {
     VectorContent::Paint(VectorPaintSpec::Fill {
         paint: ShapePaint::Solid {
-            color: [0.2, 0.4, 0.6, alpha],
+            color: [0.2, 0.4, 0.6, alpha].into(),
         },
         fill_rule: ShapeFillRule::NonZeroWinding,
         blend_mode: BlendMode::default(),
@@ -430,7 +430,10 @@ fn nested_static_and_animated_groups_fold_every_paint_without_touching_group_tra
     );
     for content in [&contents[0], &inner.contents[0]] {
         let VectorContent::Paint(VectorPaintSpec::Fill {
-            paint: ShapePaint::Solid { color },
+            paint:
+                ShapePaint::Solid {
+                    color: fx_schema::Linkable::Value(color),
+                },
             opacity,
             animations,
             ..

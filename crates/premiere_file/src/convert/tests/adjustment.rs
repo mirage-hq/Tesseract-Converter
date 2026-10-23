@@ -40,6 +40,8 @@ fn adjustment_media() -> (MediaId, PrMedia) {
                 width: 1920,
                 height: 1080,
                 kind: PrMediaKind::Adjustment,
+                input_lut: None,
+                camera_override: None,
             }),
             audio: None,
         },
@@ -885,6 +887,7 @@ fn an_fx_adjustment_layer_exports_as_a_flagged_black_video_clip_and_rereads() {
                 PrMediaKind::Video {
                     codec: Some(VideoCodec::H264),
                     hdr_profile: None,
+                    color_space_override: None,
                 },
                 0,
                 1
@@ -976,7 +979,8 @@ fn an_fx_adjustment_layer_exports_as_a_flagged_black_video_clip_and_rereads() {
                 0,
                 PrMediaKind::Video {
                     codec: None,
-                    hdr_profile: None
+                    hdr_profile: None,
+                    color_space_override: None
                 },
                 0,
                 1
@@ -1069,6 +1073,7 @@ fn fx_adjustment_layers_that_premiere_cannot_carry_are_omitted_or_reported() {
             PrMediaKind::Video {
                 codec: Some(VideoCodec::H264),
                 hdr_profile: None,
+                color_space_override: None,
             },
             0,
             1
@@ -1194,6 +1199,7 @@ fn an_fx_adjustment_layer_inside_a_group_exports_inside_the_nest() {
                 PrMediaKind::Video {
                     codec: Some(VideoCodec::H264),
                     hdr_profile: None,
+                    color_space_override: None,
                 },
                 0,
                 1
@@ -1284,7 +1290,8 @@ fn an_exported_adjustment_preserves_gaps_without_requiring_a_black_canvas() {
                     0,
                     PrMediaKind::Video {
                         codec: Some(VideoCodec::H264),
-                        hdr_profile: None
+                        hdr_profile: None,
+                        color_space_override: None
                     },
                     video_start,
                     video_end

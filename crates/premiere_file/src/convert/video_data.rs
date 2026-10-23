@@ -49,6 +49,7 @@ pub(crate) fn video_data(layer: &Layer) -> Result<Option<Cow<'_, VideoLayer>>> {
         description: legacy.description.clone(),
         metadata: None,
         is_hidden: legacy.is_hidden,
+        storyline: false,
         parent: legacy.parent,
         start_time: legacy.start_time,
         blend_mode: legacy.blend_mode,

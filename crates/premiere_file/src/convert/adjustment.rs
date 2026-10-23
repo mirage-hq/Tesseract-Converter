@@ -474,6 +474,8 @@ pub(super) fn export_adjustment_layer(
             width,
             height,
             kind: PrMediaKind::Adjustment,
+            input_lut: None,
+            camera_override: None,
         }),
         audio: None,
     };

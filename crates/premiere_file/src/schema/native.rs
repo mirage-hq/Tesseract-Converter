@@ -281,6 +281,8 @@ pub(crate) enum Record {
     AudioFilterComponent(AudioFilterComponent),
     AudioComponentParam(AudioComponentParam),
     VideoStream(VideoStream),
+    #[serde(rename = "LUTAsset")]
+    LutAsset(LutAsset),
     AudioStream(AudioStream),
     Media(Media),
     VideoMediaSource(VideoMediaSource),

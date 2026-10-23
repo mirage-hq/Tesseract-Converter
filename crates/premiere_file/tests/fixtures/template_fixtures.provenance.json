@@ -1,0 +1,128 @@
+{
+ "schema": "template-fixtures-provenance/v1",
+ "scope": "Pinned Premiere template-structure fixtures authored natively through headless-adobe; references are direct Premiere renders (not AME). Structural evidence only; no converter fidelity claim. References are not committed (local evidence only; no in-repo test consumes them): their hashes and authoring records are kept here.",
+ "cases": [
+  {
+   "case": "template_placeholder_nest",
+   "feature": "Template drop zone: an empty nested sequence placed on V2 (its linked audio item on A1) above a Lumetri-graded still on V1; Premiere 26.5.2 track editing locks at their defaults",
+   "project": {
+    "repo_path": "crates/premiere_file/tests/fixtures/template_placeholder_nest.prproj",
+    "size_bytes": 16547,
+    "sha256": "32015e4ec047699992ba00a569f97edd9e819fdc05f5b15ac16fe6ee4299e9a8",
+    "path_sanitization": {
+     "original_sha256": "26dca82f03720fcb3463668fb8a5cac50a22223a3cc2518ad09f3e1c9b41487e",
+     "original_size_bytes": 16975,
+     "note": "absolute private-job media/project paths replaced by equal-length /fixture-source/<padding>/<name>; RelativePath ./a1_bg_chart.png (as in color_fixtures.provenance.json); XML otherwise unchanged; re-gzipped"
+    }
+   },
+   "media": [
+    {
+     "repo_path": "crates/premiere_file/tests/fixtures/a1_bg_chart.png",
+     "size_bytes": 8663,
+     "sha256": "b679c8554208b55e04f4105ddf93db5601daa5f44b4211ec42d713f1005e9a7a"
+    }
+   ],
+   "sequence_uid": "55542fdc-3560-47b5-9a93-54eef4f5d673",
+   "sequence_name": "Template Placeholder Nest",
+   "nested_sequence_uid": "5abbc670-bbf9-4f16-b1cf-fc4022e248b2",
+   "nested_sequence_name": "Media _ Placeholder",
+   "premiere_version": "26.5.2",
+   "colour_setup": {
+    "working_color_space": "Rec. 709",
+    "graphics_white_nits": 203,
+    "frame_rate_ticks": "8475667200",
+    "frame": "1920x1080"
+   },
+   "authoring": {
+    "operation": "headless-adobe run_jsx (managed, native save + close + reopen readback)",
+    "script": {
+     "repo_path": "crates/premiere_file/tests/fixtures/template_placeholder_nest.author.jsx",
+     "size_bytes": 20085,
+     "sha256": "6792d7b48283590acfef1d1b5a3b7b52df5d48347a3c8a69789e25db1eafb18e"
+    },
+    "request_id": "lane-s-w5-pr-author-template-placeholder-nest-v2",
+    "adobe_queue_job": 11032,
+    "failed_attempt": {
+     "request_id": "lane-s-w5-pr-author-template-placeholder-nest-v1",
+     "adobe_queue_job": 10938,
+     "result": "RUNTIME_UNAVAILABLE: Premiere exited (SIGABRT) about 4 s into the script, which set the project graphics white before any sequence existed; v2 sets it after the sequences, as color_hdr_pq_sequence.author.jsx does"
+    }
+   },
+   "editable_assertions": {
+    "native_api": "nested sequence created from the chart, placed on V2 0-60 frames by overwriteClip, then every nested clip removed; Lumetri Exposure setValue(0.5) returned true",
+    "reopened_readback": "main V1 1 clip [Opacity, Motion, Lumetri] 0-508540032000 ticks, Exposure 0.5; V2 1 clip (isSequence) 0-508540032000; nested sequence: 3 video tracks with 0 clips, end 0; working space Rec. 709 on both; graphics white 203",
+    "saved_xml": "Track Version 4 records carry no IsSyncLocked or IsLocked element (Premiere 26.5.2 omits the defaults); the nested sequence's linked AudioClipTrackItem on A1 spans 0-1262874412800 ticks; Track.isSyncLocked() is not available in ExtendScript, so the sync-lock state was not read back"
+   },
+   "proof_status": "structural_only: independent native source + direct Premiere render; not registered in tests/manifest.json (manifest admits only strict video_reference cases with AME provenance); no converter render comparison",
+   "reference": {
+    "file_name": "template_placeholder_nest.premiere-direct-v1.mp4",
+    "committed": false,
+    "local_evidence": true,
+    "size_bytes": 21260,
+    "sha256": "073ffea04508b510852cc0abf30f805a8416c2f07247be2317c32c5c209e5849",
+    "renderer": "Premiere lossless RGB + FFmpeg BT.709",
+    "request_id": "lane-s-w5-render-premiere-template-placeholder-nest-v1",
+    "adobe_queue_job": 11056,
+    "rendered_from_sha256": "26dca82f03720fcb3463668fb8a5cac50a22223a3cc2518ad09f3e1c9b41487e",
+    "preset_sha256": "ba782c2ed88f92d6c01047d3fd3d4de0b21bbac90a3ba84f17090a37d010f11d",
+    "fps": "30000/1001",
+    "frame_count": 149,
+    "width": 1920,
+    "height": 1080
+   },
+   "measured": "192x108 area means: frames 0, 30 and 59 RGB [130.17, 139.98, 131.06] (chart [118.33, 128.33, 120.0]; frame-30 SSIM 0.988 vs the chart, MAD 11.51: the graded chart shows through the empty V2 nest, which draws nothing); frames 60-148 [0, 0, 0] (the nest's A1 audio item holds the sequence to 4.97 s; no picture there)"
+  },
+  {
+   "case": "template_track_locks",
+   "feature": "Track editing locks saved at non-default values: V1 sync lock off (IsSyncLocked false), V2 track lock on (IsLocked true), the chart still on both tracks",
+   "project": {
+    "repo_path": "crates/premiere_file/tests/fixtures/template_track_locks.prproj",
+    "size_bytes": 10439,
+    "sha256": "317f960d950a9d4fb72564ab3b1943013d5aa3f06580bad2cbd5bbc10ee66759",
+    "path_sanitization": {
+     "original_sha256": "97d500bc0f18582dbe9909c9ca9395644ee37b67b082c4ca74a06b01d5f18dbf",
+     "original_size_bytes": 10571,
+     "note": "absolute private-job media/project paths replaced by equal-length /fixture-source/<padding>/<name>; RelativePath ./a1_bg_chart.png (as in color_fixtures.provenance.json); XML otherwise unchanged; re-gzipped"
+    }
+   },
+   "media": [
+    {
+     "repo_path": "crates/premiere_file/tests/fixtures/a1_bg_chart.png",
+     "size_bytes": 8663,
+     "sha256": "b679c8554208b55e04f4105ddf93db5601daa5f44b4211ec42d713f1005e9a7a"
+    }
+   ],
+   "sequence_uid": "cfc74e38-7b60-44de-a0bb-e38d152a1494",
+   "sequence_name": "Template Track Locks",
+   "premiere_version": "26.5.2",
+   "colour_setup": {
+    "working_color_space": "Rec. 709",
+    "graphics_white_nits": 203,
+    "frame_rate_ticks": "8475667200",
+    "frame": "1920x1080"
+   },
+   "authoring": {
+    "operation": "headless-adobe run_jsx (managed, native save + close + reopen readback)",
+    "script": {
+     "repo_path": "crates/premiere_file/tests/fixtures/template_track_locks.author.jsx",
+     "size_bytes": 16250,
+     "sha256": "2c91abc88dc3e138368102ae41c69a1b244bb6cbc878df99acb492fbd46cfe1c"
+    },
+    "request_id": "lane-s-w5-pr-author-template-track-locks-v2",
+    "adobe_queue_job": 11150,
+    "failed_attempt": {
+     "request_id": "lane-s-w5-pr-author-template-track-locks-v1",
+     "adobe_queue_job": 11132,
+     "result": "RUNTIME_UNAVAILABLE: Premiere exited (SIGABRT) a few seconds after launch, before the project was saved; the identical script succeeded on retry"
+    }
+   },
+   "editable_assertions": {
+    "native_api": "QE track setSyncLock(false) on V1 and setLock(true) on V2 returned true; ExtendScript (non-QE) tracks expose isLocked/setLocked but no sync-lock method",
+    "reopened_readback": "QE V1 isSyncLocked false / isLocked false; V2 isSyncLocked true / isLocked true; both clips 0-508540032000 ticks; working space Rec. 709; graphics white 203",
+    "saved_xml": "exactly one <IsSyncLocked>false</IsSyncLocked> (V1) and one <IsLocked>true</IsLocked> (V2); the defaults (sync lock on, unlocked) are not written (Track Version 4)",
+    "probe": "before the setters both new tracks read isSyncLocked true / isLocked false in this job; a preceding probe (adobe job 11123) also saved only <IsSyncLocked>false</IsSyncLocked> after setSyncLock(false)"
+   },
+   "proof_status": "structural_only: independent native source with the non-default lock elements; no render (the locks have no picture semantics)"
+  }
+ ]
+}

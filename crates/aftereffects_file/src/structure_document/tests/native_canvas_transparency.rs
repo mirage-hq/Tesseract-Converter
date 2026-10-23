@@ -88,6 +88,8 @@ fn assert_solid(
     for (actual, expected) in rect
         .rect
         .fill_color
+        .value()
+        .unwrap()
         .iter()
         .zip([color[0], color[1], color[2], 1.0])
     {

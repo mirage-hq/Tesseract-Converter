@@ -1227,6 +1227,8 @@ pub(crate) fn sequence_document_with_progress(
     );
     picture_scope.parent = isolation.map(|(_, content_id, ..)| content_id);
     picture_scope.nesting_depth = 2 * usize::from(isolation.is_some());
+    picture_scope.graphics_white = document_graphics_white(project);
+    picture_scope.aces = project.aces.is_some();
     let mut layers = video_layers(
         project,
         picture_scope,
@@ -1315,12 +1317,20 @@ pub(crate) fn sequence_document_with_progress(
             .set_motion_blur(shutter.settings)
             .map_err(EditableBuildError::from)?;
     }
-    let document = EditableFxCompositionDocument::new(
+    let mut document = EditableFxCompositionDocument::new(
         Dimensions::new(project.width, project.height),
         duration,
         None,
         composition,
     )?;
+    if let Some(aces) = project.aces {
+        document.set_color_management(super::color_management::import_policy());
+        super::color_management::report_import(
+            aces,
+            project.id.as_deref().unwrap_or("sequence"),
+            omissions,
+        );
+    }
     // Only graphics this sequence actually shows (including nested placements)
     // decide its graphics white; other project inventory never does.
     let reachable = project.reachable_video_items();
@@ -1330,7 +1340,7 @@ pub(crate) fn sequence_document_with_progress(
             .any(|item| matches!(item, PrVideoItem::Graphic(graphic) if graphic.hdr.is_some()))
     {
         let mut value = document.to_json_value()?;
-        value["hdrGraphicsWhiteNits"] = serde_json::Value::from(609.0);
+        value["hdrGraphicsWhiteNits"] = serde_json::Value::from(document_graphics_white(project));
         EditableFxCompositionDocument::from_json_value(value)?
     } else {
         document
@@ -1344,11 +1354,29 @@ pub(crate) fn sequence_document_with_progress(
                 }
             }
         }
-        omit(omissions, OmissionScope::Feature, project.id.as_deref().unwrap_or("sequence"),
-            format!("native {:?} sequence target with graphics white {} admitted; decoded HDR source points normalized to FX 609. Original authoring white intent, destination adaptation, effects/blends/tone/gamut and render fidelity remain unproved; SDR sources are not retagged or rescaled", hdr.transfer, hdr.graphics_white));
+        let sequence = project.id.as_deref().unwrap_or("sequence");
+        omit(omissions, OmissionScope::Feature, sequence,
+            format!("native {:?} sequence target with graphics white {} admitted as hdrGraphicsWhiteNits; decoded HDR source points normalized to that white. Destination adaptation, effects/blends/tone/gamut and render fidelity remain unproved; SDR sources are not retagged or rescaled", hdr.transfer, hdr.graphics_white));
+        let (name, flag) = match hdr.transfer {
+            fx_conv::HdrTransfer::Pq => ("PQ", "pq"),
+            fx_conv::HdrTransfer::Hlg => ("HLG", "hlg"),
+        };
+        omit(omissions, OmissionScope::Feature, sequence,
+            format!("hint: sequence output is Rec.2100 {name}; FX documents carry no HDR delivery target, so use `tsrct export --hdr {flag}` to deliver it"));
     }
     report_unpackaged_fonts(project, omissions);
     Ok(document)
+}
+
+/// The `hdrGraphicsWhiteNits` of the document of `project`: its admitted HDR
+/// sequence graphics white, else the FX default (an SDR sequence showing an
+/// HDR Graphic). An SDR sequence without one writes no graphics white.
+fn document_graphics_white(project: &PrSequence) -> f64 {
+    project
+        .hdr
+        .map_or(fx_conv::DEFAULT_GRAPHICS_WHITE_NITS, |hdr| {
+            hdr.graphics_white
+        })
 }
 
 /// Editable audio layers of `sounds`, children of `parent`, with the next
@@ -2225,9 +2253,26 @@ pub(super) fn video_layers(
                     !clip.enabled,
                     transform,
                 )?;
+                if let Some(input_transform) =
+                    super::clip_input_lut::input_transform(source, record, scope.aces, omissions)
+                        .map_err(unsupported)?
+                {
+                    let fx_schema::ImageSource::Asset(asset) = &mut image.source;
+                    asset.input_transform = Some(input_transform);
+                }
                 image.parent = scope.parent;
                 image.blend_mode = clip.blend_mode.fx_mode();
                 image.effects = effects;
+                if let Some(source) = image.source.asset_mut() {
+                    super::lumetri_lut::promote_input_lut(
+                        &mut image.effects,
+                        &mut source.input_transform,
+                        scope.effect_ids,
+                        record,
+                        omissions,
+                    )
+                    .map_err(unsupported)?;
+                }
                 validate_time_range("active_range", image.active_range)?;
                 // The one mask that a still keeps is its Crop (a Crop effect or
                 // its Motion Crop) or its Opacity mask (`reader/still.rs`),
@@ -3953,15 +3998,19 @@ fn import_video_clip(
     }
     // Guide tracks precede the clip's own, which keeps the document's track order.
     tracks.extend(layer_tracks);
+    let input_transform =
+        super::clip_input_lut::input_transform(source, record, scope.aces, omissions)
+            .map_err(unsupported)?;
     let picture = match picture {
         ClipPicture::Asset(asset_id) => {
-            let layer = VideoLayer {
+            let mut layer = VideoLayer {
                 render_domain: None,
                 id: layer_id,
                 name: format!("Premiere video {}", index + 1),
                 description: String::new(),
                 metadata: None,
                 is_hidden: video_hidden,
+                storyline: false,
                 parent: video_parent,
                 start_time: None,
                 blend_mode: video_blend,
@@ -3987,8 +4036,19 @@ fn import_video_clip(
                 transform: video_transform,
                 // Fill the coded frame: contain would also apply the file's
                 // display aspect and letterbox before our saved-PAR scale.
-                source: VideoSource::from_asset(asset_id.clone(), Some(frame), MediaFit::Stretch),
+                source: VideoSource {
+                    input_transform,
+                    ..VideoSource::from_asset(asset_id.clone(), Some(frame), MediaFit::Stretch)
+                },
             };
+            super::lumetri_lut::promote_input_lut(
+                &mut layer.effects,
+                &mut layer.source.input_transform,
+                scope.effect_ids,
+                record,
+                omissions,
+            )
+            .map_err(unsupported)?;
             validate_time_range("playback.inputRange", layer.playback.input_range())?;
             validate_time_range("source_range", layer.source_range)?;
             if layer.source_intrinsic_duration.is_zero() {
@@ -5365,6 +5425,10 @@ pub(super) fn map_animation_graph_error(source: AnimationGraphError) -> BuildErr
             "animator",
             "an asset-id property must use a constant string asset id so required resources stay enumerable",
         ),
+        AnimationGraphError::StaticFontProperty(_) => (
+            "property",
+            "font selection cannot be animated; edit sourceText.fontFamily / sourceText.fontStyle instead",
+        ),
         AnimationGraphError::ReadOnlyProperty(_) => {
             ("property", "is a read-only property and cannot be animated")
         }
@@ -5505,21 +5569,24 @@ pub(super) fn text_layer(
         [doc.font.as_str(), ""]
     };
     let source_text = TextDocument {
-        text: doc.text.clone(),
-        font_family: Arc::from(font_family),
+        font_asset_id: None,
+        text: doc.text.clone().into(),
+        font_family: font_family.into(),
         font_style: Arc::from(font_style),
         font_size: PositiveProperty::new(size)
-            .ok_or_else(|| unsupported("text size must be positive"))?,
+            .ok_or_else(|| unsupported("text size must be positive"))?
+            .into(),
         font_variations: None,
         apply_fill: doc.fill.is_some(),
-        fill_color: doc.fill.map_or([1.0; 4], rgba),
+        fill_color: doc.fill.map_or([1.0; 4], rgba).into(),
         apply_stroke: doc.stroke.is_some(),
-        stroke_color: doc.stroke.map(|stroke| rgba(stroke.color)),
+        stroke_color: doc.stroke.map(|stroke| rgba(stroke.color).into()),
         stroke_width: NonNegativeProperty::new(
             doc.stroke
                 .map_or(0.0, |stroke| STROKE_WIDTH_RATIO * f64::from(stroke.width)),
         )
-        .ok_or_else(|| unsupported("text stroke width must be nonnegative"))?,
+        .ok_or_else(|| unsupported("text stroke width must be nonnegative"))?
+        .into(),
         stroke_over_fill: false,
         justification: match doc.justification {
             PrJustification::Left => Justification::Left,
@@ -5527,7 +5594,7 @@ pub(super) fn text_layer(
             PrJustification::Center => Justification::Center,
             PrJustification::Justify => Justification::Justify,
         },
-        tracking: f64::from(doc.tracking),
+        tracking: f64::from(doc.tracking).into(),
         leading,
         baseline_shift: 0.0,
         box_text: box_size.is_some(),
@@ -5540,6 +5607,7 @@ pub(super) fn text_layer(
         underline: false,
         strikethrough: false,
         vertical_align,
+        box_fit: fx_schema::BoxFit::None,
     };
     let mut transform = object_transform(&text.transform, "text")?;
     if let Some(horizontal) = text.horizontal_scale {

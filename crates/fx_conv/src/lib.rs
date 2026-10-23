@@ -3,12 +3,13 @@
 //! Format-specific parsing, media handling, and publication remain in each
 //! format crate. A format can support import, export, or both independently.
 
+pub mod aces;
 mod hdr;
 mod hdr_import;
 pub use hdr_import::GeneratedHdrColorBinding;
 mod media;
 
-pub use hdr::{HdrColorBridge, HdrColorError, HdrTransfer};
+pub use hdr::{HdrColorBridge, HdrColorError, HdrTransfer, DEFAULT_GRAPHICS_WHITE_NITS};
 mod preflight;
 mod progress;
 mod report;

@@ -555,12 +555,13 @@ fn effect_only_disable_retains_opaque_carrier_over_transparent_prefix() {
         };
         *enabled = false;
         disabled.effects[0] = EffectRecord::from_data(&effect).unwrap();
-        assert_eq!(disabled.rect.fill_color[3], 1.);
+        assert_eq!(disabled.rect.fill_color.value().unwrap()[3], 1.);
         assert_eq!(noise.transform.opacity.value(), 25.);
         // Source-over of a 25-percent opaque carrier onto transparent input
         // retains 25-percent alpha even when its generator effect is disabled.
         let prefix_alpha = retained.transform.opacity.value() / 100.;
-        let carrier_alpha = disabled.rect.fill_color[3] * noise.transform.opacity.value() / 100.;
+        let carrier_alpha =
+            disabled.rect.fill_color.value().unwrap()[3] * noise.transform.opacity.value() / 100.;
         assert_eq!(carrier_alpha + prefix_alpha * (1. - carrier_alpha), 0.25);
     }
 }

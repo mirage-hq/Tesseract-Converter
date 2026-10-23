@@ -96,6 +96,8 @@ fn linked(aep: &str, guid: &str, canvas: [u32; 2]) -> PrMedia {
             frame_rate: (FrameRate::Fps30).into(),
             width: canvas[0],
             height: canvas[1],
+            input_lut: None,
+            camera_override: None,
         }),
         audio: None,
     }

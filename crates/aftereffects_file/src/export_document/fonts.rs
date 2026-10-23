@@ -833,7 +833,9 @@ mod tests {
         fn texts(layers: &[fx_schema::Layer], output: &mut Vec<String>) {
             for layer in layers {
                 match layer.data() {
-                    fx_schema::LayerData::Text(text) => output.push(text.source_text.text.clone()),
+                    fx_schema::LayerData::Text(text) => {
+                        output.extend(text.source_text.text.value().cloned());
+                    }
                     fx_schema::LayerData::Group(group) => texts(&group.layers, output),
                     _ => {}
                 }

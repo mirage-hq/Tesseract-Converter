@@ -143,7 +143,10 @@ impl PrSequence {
 
     pub(crate) fn validate_timeline(&self, media: &BTreeMap<MediaId, PrMedia>) -> Result<()> {
         let count = self.video_items().count() + self.nest_occurrences().count() + self.audio.len();
-        if count != 0 || !(self.adjustment_only_template && self.timeline_end_ticks > 0) {
+        if count != 0
+            || !(self.empty_template_placeholder
+                || self.adjustment_only_template && self.timeline_end_ticks > 0)
+        {
             Self::validate_occurrence_count(count)?;
         }
         ensure_valid!(

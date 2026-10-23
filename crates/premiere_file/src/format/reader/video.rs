@@ -160,6 +160,17 @@ pub(super) fn report_markers(
     }
 }
 
+/// Whether a saved VR configuration declares no VR projection and no
+/// stereoscopic layout: the sequence is flat, so its captured and field-of-view
+/// angles (older saves write 0 x 0 captured) have no picture semantics.
+fn flat_vr_configuration(configuration: &str) -> bool {
+    serde_json::from_str::<serde_json::Value>(configuration).is_ok_and(|value| {
+        value["projectionType"] == 0
+            && value["stereoscopicType"] == 0
+            && value["stereoscopicEye"] == 0
+    })
+}
+
 pub(super) fn report_unknown_children(
     element: Element<'_>,
     allowed: &[&str],
@@ -221,9 +232,20 @@ fn report_track_structure(record: Record<'_>, omissions: &mut Vec<Omission>) -> 
             omissions,
         );
         if let Some(track) = clip_track.child("Track") {
+            // `IsLocked` and `IsSyncLocked` are timeline editing locks with no
+            // picture semantics; they are admitted and not retained.
             report_unknown_children(
                 track,
-                &["Node", "ID", "MediaType", "Index", "IsMuted", "Name"],
+                &[
+                    "Node",
+                    "ID",
+                    "MediaType",
+                    "Index",
+                    "IsMuted",
+                    "IsLocked",
+                    "IsSyncLocked",
+                    "Name",
+                ],
                 &identity,
                 "ClipTrack/Track/",
                 omissions,
@@ -414,11 +436,27 @@ pub(super) fn read_tracks(
             "non-square sequence pixels ({ratio}) are unsupported"
         );
     }
+    // Premiere 26.5.x saves graphics white 203 on every new sequence.
+    let color_management = video
+        .value
+        .color_management_settings
+        .as_deref()
+        .filter(|&settings| settings != records::COLOR_MANAGEMENT_SETTINGS_26_5);
     for (name, actual, expected) in [
         (
             "ColorManagementSettings",
-            video.value.color_management_settings.as_deref(),
+            color_management,
             records::COLOR_MANAGEMENT_SETTINGS,
+        ),
+        (
+            "ToneMappingDesaturation",
+            video.value.tone_mapping_desaturation.as_deref(),
+            records::TONE_MAPPING_DESATURATION,
+        ),
+        (
+            "ToneMappingKnee",
+            video.value.tone_mapping_knee.as_deref(),
+            super::hdr::saved_default_tone_mapping_knee(graph, &video).unwrap_or_default(),
         ),
         (
             "ImmersiveVideoVRConfiguration",
@@ -448,6 +486,10 @@ pub(super) fn read_tracks(
             if name == "ColorManagementSettings" && super::hdr::is_admitted(graph, &video) {
                 continue; // The sequence coordinator already bound these exact HDR settings.
             }
+            if name == "ImmersiveVideoVRConfiguration" && actual.is_some_and(flat_vr_configuration)
+            {
+                continue;
+            }
             omit(
                 omissions,
                 OmissionScope::Feature,
@@ -476,14 +518,9 @@ pub(super) fn read_tracks(
             "{}: sequence-level Crop, Linear Wipe or Track Matte Key is unsupported",
             video.identity
         );
-    } else {
-        omit(
-            omissions,
-            OmissionScope::Feature,
-            &video.identity,
-            "missing component chain; effects not converted",
-        );
     }
+    // Without a component chain (older saves) the sequence has no
+    // sequence-level effects, so nothing is lost.
 
     let track_group = required(
         video.value.track_group.as_ref(),
@@ -3093,6 +3130,13 @@ fn read_video_stream(
     } else {
         crate::schema::SourceInterpretation::Original
     };
+    let (input_lut, camera_override) =
+        if matches!(kind, crate::schema::PrMediaKind::AfterEffectsComposition(_)) {
+            (None, None)
+        } else {
+            let video = matches!(kind, crate::schema::PrMediaKind::Video { .. });
+            clip_color::read(graph, &stream, &media.identity, video, omissions)?
+        };
     Ok(PrVideoStream {
         pixel_aspect,
         interpretation,
@@ -3102,6 +3146,8 @@ fn read_video_stream(
         frame_rate,
         width,
         height,
+        input_lut,
+        camera_override,
     })
 }
 
@@ -3296,6 +3342,7 @@ fn validate_color(
     Ok(())
 }
 
+mod clip_color;
 #[cfg(test)]
 mod tests;
 

@@ -203,7 +203,8 @@ pub(crate) trait OmissionSink {
         self.emit(omission);
     }
 
-    /// Reports a deliberately retained native Lens/Alpha Glow/Grain approximation.
+    /// Reports a deliberately retained native Lens/Alpha Glow/Grain approximation,
+    /// or the declared scale mapping of a written Lumetri Color.
     /// The current editable effect was emitted successfully; replacing its
     /// picture with linked AE would discard the chosen native representation.
     /// Missing/failed effects must still use ordinary loss reporting.
@@ -265,6 +266,138 @@ pub(crate) fn omit_field(
         layer,
         field,
     );
+}
+
+/// What export writes for a layer's `source.inputTransform`, and the report
+/// of what it loses (`None` when nothing is lost).
+///
+/// Premiere 26.5.2 saves a clip Input LUT as a `LUTAsset` with the embedded
+/// samples (`color_clip_input_lut.prproj`) and a Color Space Override as
+/// `OverriddenColorSpace` (`color_clip_colorspace_override.prproj`), both on
+/// the media's `VideoStream`. A `lut3d` into Rec.709 display therefore writes
+/// the LUT as the clip Input LUT; its input encoding writes the equal Color
+/// Space Override when one exists, and Rec.709 display input needs none.
+/// `luts` holds the packaged `.cube` assets that export read. The pinned
+/// override grammar is a video stream's, so a still (`video` false) writes
+/// no override: its camera interpretation is reported instead. In an ACES
+/// document (`aces`) a `cameraInput` writes the equal Color Space Override,
+/// which an ACEScct sequence converts from the camera's log curve and gamut.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct InputTransformExport {
+    /// The Premiere Color Space Override label written on the media.
+    pub(crate) color_space_override: Option<&'static str>,
+    /// The clip Input LUT written on the media.
+    pub(crate) input_lut: Option<crate::schema::PrClipInputLut>,
+    pub(crate) loss: Option<String>,
+}
+
+/// Report the retained approximation of a written clip Input LUT: Premiere
+/// interpolates it tetrahedrally ([`crate::cube_lut::PREMIERE_LUT_INTERPOLATION`]).
+/// The LUT itself is written, so this is not a routing loss.
+pub(crate) fn report_clip_input_lut_interpolation(sink: &mut dyn OmissionSink, record: &str) {
+    sink.emit_retained_native_effect(Omission {
+        scope: OmissionScope::Feature,
+        kind: crate::OmissionKind::Approximated,
+        record: record.to_owned(),
+        reason: format!(
+            "source.inputTransform written as the clip Interpret Footage Input LUT; {}",
+            crate::cube_lut::PREMIERE_LUT_INTERPOLATION
+        ),
+    });
+}
+
+pub(crate) fn input_transform_export(
+    transform: &fx_schema::PersistedInputTransform,
+    luts: &crate::cube_lut::InputLutAssets,
+    video: bool,
+    aces: bool,
+) -> InputTransformExport {
+    let prefix = format!("{} was not exported", ExportField::InputTransform);
+    let lost = |reason: String| InputTransformExport {
+        color_space_override: None,
+        input_lut: None,
+        loss: Some(reason),
+    };
+    let camera_input = |encoding: &str| {
+        match crate::schema::premiere_space_for_camera_encoding(encoding) {
+        _ if !aces => lost(format!("{prefix}: cameraInput {encoding} is an ACES Input Transform, but the document is not an ACES document")),
+        Some(space) if video => InputTransformExport {
+            color_space_override: Some(space),
+            input_lut: None,
+            loss: None,
+        },
+        Some(space) => lost(format!("{prefix}: cameraInput {encoding} on a still: the pinned Color Space Override grammar is a video stream's, so Color Space Override {space:?} is not written and the still plays with its own interpretation")),
+        None => lost(format!("{prefix}: cameraInput {encoding} has no equal Premiere Color Space Override, so the clip plays with its own interpretation in the ACEScct sequence")),
+    }
+    };
+    let Some(transform) = transform.as_supported() else {
+        // The reader keeps every non-`lut3d` transform opaque, including
+        // `cameraInput`, the ACES-only camera declaration.
+        let payload = transform.unsupported_payload();
+        let camera = payload
+            .filter(|payload| payload.pointer("/transform/type") == Some(&"cameraInput".into()))
+            .and_then(|payload| payload.pointer("/transform/inputEncoding"))
+            .and_then(serde_json::Value::as_str);
+        return match camera {
+            Some(encoding) => camera_input(encoding),
+            None => lost(format!(
+                "{prefix}: unsupported future input-transform payload"
+            )),
+        };
+    };
+    match &transform.transform {
+        fx_schema::InputColorTransform::Lut3d {
+            asset_id,
+            input_encoding,
+            output_encoding,
+            ..
+        } => {
+            let (input, output) = (input_encoding.to_string(), output_encoding.to_string());
+            let asset = asset_id.as_str();
+            let camera_space = crate::schema::premiere_space_for_camera_encoding(&input);
+            let space = camera_space.filter(|_| video);
+            if output != fx_schema::color::SDR_REC709_DISPLAY_ENCODING_ID {
+                let manual = space.map_or_else(String::new, |space| {
+                    format!(" with Color Space Override {space:?}")
+                });
+                return lost(format!("{prefix}: lut3d {input} -> {output} does not end in Rec.709 display, the values a clip Input LUT hands to a Rec.709 sequence, so no clip Input LUT{} is written and the picture plays uninterpreted; apply Modify > Interpret Footage > Input LUT asset {asset:?}{manual} in Premiere to restore it", if space.is_some() { " or Color Space Override" } else { "" }));
+            }
+            let packaged = match luts.get(asset) {
+                Some(Ok(packaged)) => packaged,
+                unread => {
+                    let why = match unread {
+                        Some(Err(reason)) => reason.clone(),
+                        _ => "was not read for export".to_owned(),
+                    };
+                    // Premiere's own camera conversion still stands in for the LUT.
+                    return InputTransformExport {
+                        color_space_override: space,
+                        input_lut: None,
+                        loss: Some(match space {
+                            Some(space) => format!("{prefix} as a LUT: the lut3d .cube asset {asset:?} {why}, so no clip Input LUT is written; Color Space Override {space:?} was written instead, so Premiere's own {space} to working-space conversion replaces the LUT and colour specific to that LUT is lost"),
+                            None => format!("{prefix}: the lut3d .cube asset {asset:?} {why}, so no clip Input LUT is written and the picture plays without it"),
+                        }),
+                    };
+                }
+            };
+            let input_lut = Some(packaged.clip_input_lut());
+            let written = |loss: Option<String>| InputTransformExport {
+                color_space_override: space,
+                input_lut: input_lut.clone(),
+                loss,
+            };
+            let file = &packaged.file_name;
+            match (space, camera_space) {
+                (Some(_), _) => written(None),
+                (None, Some(label)) => written(Some(format!("{prefix} input encoding: lut3d {input} -> {output} was written as the still's Input LUT {file:?}, but no Color Space Override {label:?} is written on a still image, so Premiere applies the LUT to the still's own interpretation"))),
+                (None, None) if input == fx_schema::color::SDR_REC709_DISPLAY_ENCODING_ID => written(None),
+                (None, None) => written(Some(format!("{prefix} input encoding: lut3d {input} -> {output} was written as the clip Input LUT {file:?}, but Premiere offers no Color Space Override equal to {input}, so Premiere applies the LUT to the clip's own interpretation rather than to {input} values"))),
+            }
+        }
+        fx_schema::InputColorTransform::CameraInput { input_encoding } => {
+            camera_input(&input_encoding.to_string())
+        }
+    }
 }
 
 /// Retains every routing event and every distinct human diagnostic.

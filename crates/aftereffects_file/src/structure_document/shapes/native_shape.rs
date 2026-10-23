@@ -135,9 +135,9 @@ pub(super) fn lower_with_context(
         PercentageProperty::new(opacity * 100.0).unwrap_or_else(|| identity_transform().opacity);
     // Unsupported paint types must not become a plausible-looking solid.
     if shape.shape.fills.iter().any(|paint| {
-        matches!(&paint.paint, ShapePaint::Solid { color } if color.iter().any(|value| !value.is_finite()))
+        matches!(&paint.paint, ShapePaint::Solid { color } if color.value().is_none_or(|color| color.iter().any(|value| !value.is_finite())))
     }) || shape.shape.strokes.iter().any(|paint| {
-        matches!(&paint.paint, ShapePaint::Solid { color } if color.iter().any(|value| !value.is_finite()))
+        matches!(&paint.paint, ShapePaint::Solid { color } if color.value().is_none_or(|color| color.iter().any(|value| !value.is_finite())))
     }) {
         collector.animations.truncate(start);
         collector.animation_budget.rollback(animation_checkpoint);

@@ -97,7 +97,7 @@ pub(super) fn producer(
             position: [0.0, 0.0],
             roundness,
             fill_enabled: false,
-            fill_color: [0.0, 0.0, 0.0, 1.0],
+            fill_color: [0.0, 0.0, 0.0, 1.0].into(),
             fill_paint: None,
             fill_blend_mode: None,
             stroke_enabled: false,
@@ -393,7 +393,7 @@ pub(super) fn lower_with_context(
         |value| value.opacity,
     );
     let paint_color = |paint: &ShapePaint| match paint {
-        ShapePaint::Solid { color } => Some(*color),
+        ShapePaint::Solid { color } => color.value().copied(),
         ShapePaint::Gradient { stops, .. } => stops.first().map(|stop| stop.color),
     };
     let fill_color = fill.as_ref().and_then(|value| paint_color(&value.paint));
@@ -516,11 +516,11 @@ pub(super) fn lower_with_context(
             position: [0.0, 0.0],
             roundness,
             fill_enabled: fill.is_some(),
-            fill_color: fill_color.unwrap_or([0.0, 0.0, 0.0, 1.0]),
+            fill_color: fill_color.unwrap_or([0.0, 0.0, 0.0, 1.0]).into(),
             fill_paint,
             fill_blend_mode: None,
             stroke_enabled: stroke.is_some(),
-            stroke_color,
+            stroke_color: stroke_color.map(Into::into),
             stroke_width: stroke
                 .as_ref()
                 .map_or(Default::default(), |value| value.width),

@@ -443,6 +443,7 @@ fn source_text_alias_converter_applies_occurrence_override_without_source_mutati
     let mut converter = Converter {
         text_overrides: Default::default(),
         effect_definitions: &[],
+        grade_domain: crate::effects::color_grades::ColorGradeDomain::Legacy,
         expression_samples: &samples,
         expression_evaluations: Default::default(),
         items: project.items.iter().map(|item| (item.id, item)).collect(),
@@ -463,6 +464,7 @@ fn source_text_alias_converter_applies_occurrence_override_without_source_mutati
         shape_budget: shapes::OutputBudget::default(),
         mapped_shape_expressions: Default::default(),
         root_progress: Progress::default().phase("alias test", "layers", 0),
+        hdr_transfer: None,
     };
     fn text(layers: &[FxLayer], name: &str) -> fx_schema::TextDocument {
         for layer in layers {

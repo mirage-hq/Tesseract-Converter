@@ -491,7 +491,7 @@ fn held_segments(
         // Native animator tracking is pixels; document tracking is already 1/1000 em.
         for animator in &mut animators {
             animator.tracking = animator.tracking.and_then(|value| {
-                let scaled = value * (1000.0 / document.font_size.value());
+                let scaled = value * (1000.0 / document.font_size.number()?);
                 if scaled.is_finite() {
                     Some(scaled)
                 } else {
@@ -706,18 +706,27 @@ pub(super) fn saved_graphic_width(layer: &Layer, current: &TextDocument) -> Resu
     let source = read_source(layer)?.ok_or(TextError::Layout("missing Source Text layout"))?;
     let (original, _) =
         convert_document(&source.documents[0], &source.fonts, source.frame.as_ref());
-    let count = original.text.trim_end_matches(['\r', '\n']).chars().count();
-    if count == 0 || current.text.contains(['\r', '\n']) {
+    let count = original.text.value().map_or(0, |text| {
+        text.trim_end_matches(['\r', '\n']).chars().count()
+    });
+    let (Some(current_text), Some(current_size), Some(original_size)) = (
+        current
+            .text
+            .value()
+            .filter(|text| count != 0 && !text.contains(['\r', '\n'])),
+        current.font_size.number(),
+        original.font_size.number(),
+    ) else {
         return Err(TextError::Layout(
             "single-line cached advance approximation unavailable",
         ));
-    }
+    };
     Ok(
         cached_glyph_width(&source.documents[0]).map_err(TextError::Layout)?
-            * current.text.chars().count() as f64
+            * current_text.chars().count() as f64
             / count as f64
-            * current.font_size.value()
-            / original.font_size.value(),
+            * current_size
+            / original_size,
     )
 }
 
@@ -876,7 +885,12 @@ fn segment_animation_entries(
                 animator,
                 &format!("{segment} {}", source_animator.name),
                 clock,
-                1000.0 / text.source_text.font_size.value(),
+                1000.0
+                    / text
+                        .source_text
+                        .font_size
+                        .number()
+                        .expect("imported text holds its font size"),
                 TextAnimationOutput::new(&mut entries, &mut warnings, budget),
             );
         }
@@ -999,10 +1013,11 @@ impl SourceText {
             copied.box_position = document.box_position;
             copied.box_first_baseline = document.box_first_baseline;
             copied.vertical_align = document.vertical_align;
+            copied.box_fit = document.box_fit;
             copied.scale_box_text_with_transform = document.scale_box_text_with_transform;
             document = copied;
         }
-        document.text = editable_text(&percent.texts[index]);
+        document.text = editable_text(&percent.texts[index]).into();
         (document, warnings)
     }
 }
@@ -1178,10 +1193,14 @@ pub(crate) fn saved_graphic_document(
     {
         warnings.push("capsule static text snapshot does not reconstruct Text animators, path or More Options controllers".into());
     }
+    let family = document
+        .font_family
+        .value()
+        .expect("an imported text holds its font family");
     let font = if document.font_style.as_ref().is_empty() {
-        document.font_family.to_string()
+        family.to_string()
     } else {
-        format!("{}-{}", document.font_family, document.font_style)
+        format!("{family}-{}", document.font_style)
     };
     Ok((document, font, warnings))
 }
@@ -3151,19 +3170,20 @@ fn convert_document(
 
     (
         TextDocument {
-            text,
-            font_family: Arc::from(font_family),
+            font_asset_id: None,
+            text: text.into(),
+            font_family: font_family.into(),
             font_style: Arc::from(font_style),
-            font_size,
+            font_size: font_size.into(),
             font_variations: None,
             apply_fill,
-            fill_color,
+            fill_color: fill_color.into(),
             apply_stroke: apply_stroke && stroke_color.is_some(),
-            stroke_color,
-            stroke_width,
+            stroke_color: stroke_color.map(Into::into),
+            stroke_width: stroke_width.into(),
             stroke_over_fill,
             justification,
-            tracking,
+            tracking: tracking.into(),
             leading,
             baseline_shift,
             box_text: geometry.is_some(),
@@ -3175,6 +3195,7 @@ fn convert_document(
             underline: false,
             strikethrough: false,
             vertical_align,
+            box_fit: fx_schema::BoxFit::None,
         },
         warnings,
     )
@@ -3576,7 +3597,7 @@ mod tests {
         );
         let document = cos::parse(source.as_bytes()).unwrap();
         let (document, _) = super::convert_document(&document, &[], None);
-        assert!(document.font_size.value().is_finite());
+        assert!(document.font_size.number().is_some_and(f64::is_finite));
     }
 
     #[test]
@@ -4952,7 +4973,7 @@ mod tests {
             )
             .unwrap();
             let (text, warnings) = convert_document(&document, &fonts, None);
-            assert_eq!(text.font_family.as_ref(), family);
+            assert_eq!(text.font_family, family);
             assert_eq!(
                 warnings.iter().any(|warning| warning.contains("fallback")),
                 index == 0 || index == 2
@@ -4975,10 +4996,10 @@ mod tests {
         let fonts = extract_fonts(&root);
         let document = at(&root, &[Key::Name("1"), Key::Name("1"), Key::Index(0)]).unwrap();
         let (text, warnings) = convert_document(document, &fonts, None);
-        assert_eq!(text.font_family.as_ref(), "Bungee");
+        assert_eq!(text.font_family, "Bungee");
         assert_eq!(text.font_style.as_ref(), "Regular");
         assert_eq!(text.text, "B");
-        assert_eq!(text.font_size.value(), 210.0);
+        assert_eq!(text.font_size.number(), Some(210.0));
         assert!(!warnings.iter().any(|warning| warning.contains("fallback")));
     }
 
@@ -5049,7 +5070,7 @@ mod tests {
                 panic!("editable Text expected")
             };
             let size = [50.0, 100.0][index];
-            assert_eq!(text.source_text.font_size.value(), size);
+            assert_eq!(text.source_text.font_size.number(), Some(size));
             assert_eq!(text.source_text.text, "AB");
             assert_eq!(text.source_text.tracking, -10.0);
             assert_eq!(text.animators[1].tracking, Some(-5.0 * 1000.0 / size));
@@ -5151,6 +5172,7 @@ mod tests {
             id: LayerId::new(9000),
             name: "inner".into(),
             description: String::new(),
+            variables: Default::default(),
             is_hidden: false,
             parent: None,
             blend_mode: Default::default(),
@@ -5198,9 +5220,9 @@ mod tests {
 
         let point = imported.remove(&14).unwrap();
         assert_eq!(point.source_text.text, "Hello World\nSecond Paragraph\nEnd");
-        assert_eq!(point.source_text.font_family.as_ref(), "MyriadPro");
+        assert_eq!(point.source_text.font_family, "MyriadPro");
         assert_eq!(point.source_text.font_style.as_ref(), "Regular");
-        assert_eq!(point.source_text.font_size.value(), 72.0);
+        assert_eq!(point.source_text.font_size.number(), Some(72.0));
         assert_eq!(point.source_text.fill_color, [1.0, 0.0, 0.0, 1.0]);
         assert!(!point.source_text.box_text);
 

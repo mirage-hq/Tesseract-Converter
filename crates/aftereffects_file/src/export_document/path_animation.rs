@@ -31,7 +31,10 @@ pub(super) fn partial_stroke_slots(
     let (last, fills) = paints.split_last()?;
     let VectorContent::Paint(
         stroke @ VectorPaintSpec::Stroke {
-            paint: fx_schema::ShapePaint::Solid { color },
+            paint:
+                fx_schema::ShapePaint::Solid {
+                    color: fx_schema::Linkable::Value(color),
+                },
             blend_mode,
             opacity,
             dashes,

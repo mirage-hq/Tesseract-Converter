@@ -171,7 +171,7 @@ mod tests {
                 position: [3.0, -4.0],
                 roundness: 6.0,
                 fill_enabled: true,
-                fill_color: [1.0; 4],
+                fill_color: [1.0; 4].into(),
                 fill_paint: None,
                 fill_blend_mode: None,
                 stroke_enabled: false,

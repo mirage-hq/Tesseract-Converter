@@ -32,6 +32,8 @@ fn still_media(name: &str, alpha: bool) -> PrMedia {
             width: 1920,
             height: 1080,
             kind: PrMediaKind::Still { alpha },
+            input_lut: None,
+            camera_override: None,
         }),
         audio: None,
     }
@@ -90,8 +92,10 @@ fn image_layers(document: &Value) -> Vec<&Value> {
         .collect()
 }
 
+/// An FX ACES document exports as an ACEScct sequence for every compositing
+/// preset; the presets other than footageOnly are reported.
 #[test]
-fn color_management_aces_export_is_explicitly_unsupported() {
+fn color_management_aces_exports_an_acescct_sequence() {
     let (sequence, media) = stills_over_video();
     let mut value = project_document_with_media(&sequence, &media);
     assert_eq!(
@@ -103,7 +107,7 @@ fn color_management_aces_export_is_explicitly_unsupported() {
             json!({"workingSpace":"acescct","outputTransform":"aces2.0","compositing":compositing});
         let document = EditableFxCompositionDocument::from_json_value(value.clone()).unwrap();
         let mut collector = crate::export_loss::LossCollector::default();
-        let error = crate::convert::lower_document(
+        let lowered = crate::convert::lower_document(
             &document,
             &packaged_facts(),
             &BTreeMap::new(),
@@ -111,11 +115,32 @@ fn color_management_aces_export_is_explicitly_unsupported() {
             FrameRate::Fps30,
             &mut collector,
         )
-        .err()
-        .expect("ACES must not be exported as legacy");
-        assert!(error
-            .to_string()
-            .contains("acescct color management cannot be exported"));
+        .unwrap();
+        let project = lowered.project.unwrap();
+        let sequence = project.single_sequence().unwrap();
+        assert_eq!(
+            sequence.aces,
+            Some(crate::schema::SequenceAces { hdr_output: None })
+        );
+        assert_eq!(sequence.hdr, None);
+        let reasons: Vec<_> = collector
+            .diagnostics()
+            .iter()
+            .map(|omission| omission.reason.as_str())
+            .collect();
+        assert!(
+            reasons.iter().any(|reason| reason.starts_with(
+                "FX ACES document exported as a Premiere sequence with the ACEScct working colour space"
+            )),
+            "{reasons:?}"
+        );
+        assert_eq!(
+            reasons
+                .iter()
+                .any(|reason| reason.starts_with("FX ACES compositing")),
+            compositing != "footageOnly",
+            "{compositing}: {reasons:?}"
+        );
     }
 }
 
@@ -185,7 +210,7 @@ fn image_layer_edits_report_typed_losses_and_a_classic_blend_its_approximation()
                 == ExportLossSource::Layer(fx_schema::LayerId::new(image))
                 && loss.domain == domain
                 && loss.kind == ExportLossKind::Field(field)
-                && loss.omission.reason == reason),
+                && loss.omission.reason.starts_with(reason)),
             "{field:?}: {report:?}"
         );
     }
@@ -579,6 +604,7 @@ fn image_layers_export_as_still_occurrences_on_the_synthetic_still_clock() {
         PrMediaKind::Video {
             codec: Some(VideoCodec::H264),
             hdr_profile: None,
+            color_space_override: None,
         }
     );
 }

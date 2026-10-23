@@ -29,7 +29,7 @@ records plugin identities/defaults.
 
 | FX / native effect | Mapped controls and units | Important limits |
 | --- | --- | --- |
-| `gaussianBlur` / `ADBE Gaussian Blur 2` | Blurriness in pixels; static Repeat Edge Pixels. | Both-axis blur profile; one-axis modes and animated repeat flags are not general support. FX radius/kernel and edge sampling differ. |
+| `gaussianBlur` / `ADBE Gaussian Blur 2` | Blurriness in pixels; static Repeat Edge Pixels; Blur Dimensions read on import (Horizontal and Vertical is the represented mode). | Both-axis blur profile; a Horizontal or Vertical Blur Dimensions is diagnosed by name and blurs both axes; animated repeat flags are not general support. FX radius/kernel and edge sampling differ. Adobe proof of the one-axis diagnostic: unrun (synthetic writer-generated instances only). |
 | `glow` / `ADBE Glo2` | Threshold converts native 0–255 to FX percent; radius in pixels; intensity multiplier and enabled state. | Unmapped color/composite controls differ. Export uses a Normal-operation approximation rather than assuming catalog Add matches FX. |
 | `directionalBlur` / `ADBE Motion Blur` | Direction in degrees, blur length in composition pixels. | Native kernel/plane and blur extent are not equivalent by matching numbers. |
 | `pixelMotionBlur` / `ADBE OFMotionBlur` | Manual/automatic shutter mode, shutter angle, samples and vector detail. | Optical flow is not general parity; historical geometry-motion exports were rejected by Adobe despite passing structure tests. |
@@ -40,7 +40,7 @@ records plugin identities/defaults.
 | --- | --- | --- |
 | `mosaic` / `ADBE Mosaic` | Integer horizontal/vertical block counts and Sharp Colors. | Bounds-dependent normalization/approximation has narrow admission. Grid origin, source clipping and animated geometry can differ. |
 | `shiftChannels` / `ADBE Shift Channels` | Static own-channel, Full On and Full Off routes for RGB. | Cross-channel/derived routes and alpha routing are not general mappings. |
-| `brightnessContrast` / `ADBE Brightness & Contrast 2` | Brightness/contrast native scalar units. | Legacy/HDR mode and kernel differences remain; historical control/render failures are recorded separately. |
+| `brightnessContrast` / `ADBE Brightness & Contrast 2` | Brightness/contrast native scalar units; Use Legacy read on import, written off on export. | FX kernel approximates AE's default mode; legacy mode is diagnosed with its measured formula (see the colour-effects ledger in `after-effects-support.md`); historical control/render failures are recorded separately. |
 | `hueSaturation` / `ADBE HUE SATURATION` | Bounded signed Master values and selected Colorize controls. | Static integer Master export is supported; animated Master/Colorize-toggle controls retain diagnosed base fallback. Individual color ranges are not generally preserved. |
 | `levels` / Easy Levels import, Pro Levels export | Master input/output black/white convert native 0–1 to FX 0–255; gamma is the midpoint exponent. | Export changes plugin identity; per-channel/alpha/clipping combinations are not a general Levels round trip. |
 | `exposure` / `ADBE Exposure2` | Master exposure, offset and gamma correction. | Per-channel/linear-light policy is not implied; color space and clipping can differ. |
@@ -104,8 +104,14 @@ Static/readback observations do not establish animated support or general kernel
 
 ## Unmapped and specialized families
 
-- Unknown native effects and unsupported FX grades/lens/ML effects have no generic
-  editable translation. Similar names are not mapping evidence.
+- Unknown native effects and unsupported lens/ML effects have no generic editable
+  translation. Similar names are not mapping evidence.
+- FX colour grades `primaryGrade`, `tonalColor`, `channelMixer`, `selectiveColor`
+  and `colorCurves` have editable approximations to and from Lumetri Color,
+  Color Balance, Channel Mixer, Selective Color and Curves, and effect
+  `compositingOptions` map to native Compositing Options; see
+  [Native colour effects and Compositing Options](../after-effects-support.md#native-colour-effects-and-compositing-options).
+  `lookTransform`, `hueCurves` and Apply Color LUT stay unmapped with diagnostics.
 - `CustomShader` has no native AEP export equivalent. Its **rendering owner is
   omitted**, not merely its shader; independent shader-free content remains.
   No baking or generated script is implied.

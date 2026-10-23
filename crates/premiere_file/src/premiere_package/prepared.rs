@@ -11,10 +11,11 @@ use serde_json::{json, Value};
 use tesseract_file::TesseractFile;
 
 use super::{
-    absolute_output_path, bind_media, copy_native_media_except, inspect_audio, inspect_media,
-    output_is_fresh,
+    absolute_output_path, bind_input_luts, bind_media, copy_native_media_except, inspect_audio,
+    inspect_input_luts, inspect_media, output_is_fresh, write_input_luts,
 };
 use crate::{
+    approximate,
     convert::{
         active_asset_id, apply_empty_root_picture, apply_replacements, exported_video_layers,
         lower_document_with_hdr, no_native_content, video_data, AfterEffectsPicture, BakedDocument,
@@ -163,9 +164,26 @@ pub(super) fn prepare_with_progress<'a>(
     progress: fx_conv::Progress<'_>,
 ) -> Result<PreparedPremiereExport<'a>> {
     let mut collector = LossCollector::default();
-    let baked = crate::convert::bake_scripts_with_progress(document, &mut collector, progress)?;
+    // Premiere has no variables: every link exports the value it reads now.
+    let baked = if document.composition().defines_variables() {
+        approximate(
+            &mut collector,
+            "document variables",
+            "FX variables flattened: each linked value is exported as its current value; variable definitions and links are not exported",
+        );
+        let mut flattened = document.clone();
+        *flattened.composition_mut() = document
+            .composition()
+            .bake_variables()
+            .map_err(|error| unsupported(error.to_string()))?;
+        crate::convert::bake_scripts_with_progress(&flattened, &mut collector, progress)?
+            .into_owned()
+    } else {
+        crate::convert::bake_scripts_with_progress(document, &mut collector, progress)?
+    };
     progress.stage("inspecting Premiere media");
     let media = inspect_media(archive, baked.document())?;
+    let input_luts = inspect_input_luts(archive, baked.document())?;
     let mut natural_frames = BTreeSet::new();
     let resolved = resolve_natural_video_frames(baked.document(), &media, &mut natural_frames)?;
     let native_document = resolved.as_ref().unwrap_or_else(|| baked.document());
@@ -174,6 +192,7 @@ pub(super) fn prepare_with_progress<'a>(
         native_document,
         &natural_frames,
         &media,
+        &input_luts,
         &audio,
         &archive.metadata().fonts,
         options.frame_rate.unwrap_or(FrameRate::Fps30),
@@ -365,8 +384,10 @@ impl PreparedPremiereExport<'_> {
             losses,
             ..
         } = self;
+        let mut input_luts = Vec::new();
         if let Some(project) = &mut project {
             bind_media(project, archive, &output)?;
+            input_luts = bind_input_luts(project);
         }
         let mut foreign_paths = Vec::new();
         let mut foreign_media_ids = BTreeSet::new();
@@ -393,6 +414,7 @@ impl PreparedPremiereExport<'_> {
         };
         let diagnostics = losses.diagnostics;
         let artifacts = std::iter::once(Artifact::project("project.prproj"))
+            .chain(input_luts.iter().map(|(name, _)| Artifact::media(name)))
             .chain(
                 project
                     .media
@@ -400,12 +422,18 @@ impl PreparedPremiereExport<'_> {
                     .filter(|(id, media)| !media.is_generator() && !foreign_media_ids.contains(*id))
                     .map(|(_, media)| Artifact::media(Path::new("media").join(&media.name))),
             )
+            .chain(
+                crate::lut_assets::bound_lut_files(&project)
+                    .into_iter()
+                    .map(|(_, name)| Artifact::media(Path::new("media").join(name))),
+            )
             .collect();
         let directory = tempfile::Builder::new()
             .prefix(".conversion-premiere-")
             .tempdir_in(staging_parent)?;
         // Foreign sources are never inspected/copied as archive-native media.
         copy_native_media_except(archive, directory.path(), &project, &foreign_media_ids)?;
+        write_input_luts(directory.path(), &input_luts)?;
         let generated_project_sha256 = PremiereProjectXml::new(&project)?
             .write_new(&directory.path().join("project.prproj"))?;
         Ok(StagedPicturePremiereExport {

@@ -790,7 +790,7 @@ fn sampled(
 fn displacements(converted: &StructuralConversion, text: &TextLayer, ms: i64) -> Vec<[f64; 2]> {
     use fx_schema::text_animator::{SelectorBasis, SelectorMode, SelectorUnits};
 
-    let count = text.source_text.text.chars().count();
+    let count = text.source_text.text.value().unwrap().chars().count();
     let mut moved = vec![[0.0; 2]; count];
     for animator in &text.animators {
         let Some(position) = animator.position else {
@@ -850,7 +850,7 @@ fn assert_alternates(
     offsets: [(i64, f64); 3],
 ) {
     let (_, text) = gate_and_text(converted);
-    let count = text.source_text.text.chars().count() as f64;
+    let count = text.source_text.text.value().unwrap().chars().count() as f64;
     for (ms, offset) in offsets {
         let (lo, hi) = ((start + offset) * count, (1.0 + offset) * count);
         for (unit, moved) in displacements(converted, text, ms).into_iter().enumerate() {
@@ -861,7 +861,7 @@ fn assert_alternates(
                 assert!(
                     (moved[axis] - expected).abs() < 1e-9,
                     "{ms} ms: character {unit} ({:?}) axis {axis} moved {} instead of {expected}",
-                    text.source_text.text.chars().nth(unit),
+                    text.source_text.text.value().unwrap().chars().nth(unit),
                     moved[axis]
                 );
             }

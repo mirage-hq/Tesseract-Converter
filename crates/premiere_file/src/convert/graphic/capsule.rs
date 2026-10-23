@@ -87,13 +87,15 @@ fn collect(
                     if text.is_hidden {
                         return Ok(None);
                     }
+                    let family = text
+                        .source_text
+                        .font_family
+                        .value()
+                        .ok_or_else(|| unsupported("a linked font family is unsupported"))?;
                     let font = if text.source_text.font_style.is_empty() {
-                        text.source_text.font_family.to_string()
+                        family.to_string()
                     } else {
-                        format!(
-                            "{}-{}",
-                            text.source_text.font_family, text.source_text.font_style
-                        )
+                        format!("{family}-{}", text.source_text.font_style)
                     };
                     let mut current = text.clone();
                     if current.anchor_options.as_ref().is_some_and(|options| {
@@ -123,6 +125,10 @@ fn collect(
                         (document.underline, "underline"),
                         (document.strikethrough, "strikethrough"),
                         (document.box_first_baseline.is_some(), "box first baseline"),
+                        (
+                            document.box_fit != fx_schema::BoxFit::None,
+                            "box shrink-to-fit",
+                        ),
                     ] {
                         if present {
                             approximate(
@@ -137,6 +143,7 @@ fn collect(
                     document.underline = false;
                     document.strikethrough = false;
                     document.box_first_baseline = None;
+                    document.box_fit = fx_schema::BoxFit::None;
                     if document.box_text
                         && document.leading.is_some()
                         && document.vertical_align != Some(fx_schema::VerticalAlign::Top)
@@ -383,7 +390,7 @@ mod tests {
         };
         let mut text = text.clone();
         text.source_text.apply_stroke = true;
-        text.source_text.stroke_color = Some([1.0, 0.0, 0.0, 1.0]);
+        text.source_text.stroke_color = Some([1.0, 0.0, 0.0, 1.0].into());
         text.animators.push(fx_schema::TextAnimator {
             id: fx_schema::FxItemId::new(90008),
             stroke_width: Some(2.0),
@@ -457,7 +464,7 @@ mod tests {
         let mut unsupported = text.clone();
         unsupported.id = LayerId::new(90003);
         unsupported.name = "oversize".into();
-        unsupported.source_text.font_size = PositiveProperty::new(1e100).unwrap();
+        unsupported.source_text.font_size = PositiveProperty::new(1e100).unwrap().into();
         group
             .layers
             .push(Layer::from_data(&LayerData::Text(unsupported)).unwrap());

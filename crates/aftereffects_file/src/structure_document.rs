@@ -324,6 +324,12 @@ fn convert_with_text_overrides(
             .collect(),
         expression_samples,
         effect_definitions: &project.effect_definitions,
+        grade_domain: match project.color {
+            crate::structure::ProjectColorContext::Aces { .. } => {
+                crate::effects::color_grades::ColorGradeDomain::Aces
+            }
+            _ => crate::effects::color_grades::ColorGradeDomain::Legacy,
+        },
         expression_evaluations: expression_evaluations::ExpressionEvaluations::new(
             &project.effect_definitions,
         ),
@@ -346,9 +352,18 @@ fn convert_with_text_overrides(
         shape_budget: shapes::OutputBudget::default(),
         mapped_shape_expressions: HashSet::new(),
         root_progress: progress.phase("convert AEP root layers", "root layers", comp.layers.len()),
+        hdr_transfer: match &project.color {
+            crate::structure::ProjectColorContext::Hdr { transfer, .. } => Some(*transfer),
+            _ => None,
+        },
     };
     if project.format_version != 97 {
-        converter.warn(Limitation::Version, None, None, format!("producer format {} is parsed using known record layouts; AE26 is the primary implementation reference", project.format_version));
+        let relation = if project.format_version < 97 {
+            "older"
+        } else {
+            "newer"
+        };
+        converter.warn(Limitation::Version, None, None, format!("project saved by {} (project format {}), {relation} than the After Effects 26 reference layout (format 97, measured from 26.0 to 26.5 saves); records are parsed using the known record layouts and unread fields are diagnosed where they occur", project.producer, project.format_version));
     }
     converter.warn(Limitation::ProjectMetadata, Some(selected.id), None,
         "only the selected composition graph is expanded; project folders, unused items, footage bytes/proxies, render settings, markers and editor metadata are not exported; unnamed file sources use alias basenames, not sequence/layer-bound display names".into());
@@ -537,6 +552,8 @@ struct Converter<'a> {
     text_overrides: HashMap<(u32, u32), &'a crate::graphic_template::SavedGraphicText>,
     expression_samples: &'a ExpressionSamples,
     effect_definitions: &'a [crate::rifx::Chunk],
+    /// Selects the Lumetri Exposure scale of imported colour grades.
+    grade_domain: crate::effects::color_grades::ColorGradeDomain,
     expression_evaluations: expression_evaluations::ExpressionEvaluations<'a>,
     items: HashMap<u32, &'a ProjectItem>,
     camera_normalizations: HashMap<u32, camera_normalization::CompositionNormalization>,
@@ -562,6 +579,9 @@ struct Converter<'a> {
     shape_budget: shapes::OutputBudget,
     mapped_shape_expressions: HashSet<(u32, u32, crate::expression_samples::PropertyIdentity)>,
     root_progress: ProgressPhase<'a>,
+    /// Transfer of an admitted HDR working space; only it gives 32 bpc
+    /// super-white solid code values above 1.0 a meaning.
+    hdr_transfer: Option<fx_conv::HdrTransfer>,
 }
 
 impl Converter<'_> {
@@ -1259,6 +1279,7 @@ impl Converter<'_> {
         let mut adjustment_opacity = None;
         let mut native_effect_ordinals = Vec::new();
         let mut fractal_blends = Vec::new();
+        let mut pending_effect_masks = Vec::new();
         let LayerContext {
             comp_id,
             comp,
@@ -1510,6 +1531,7 @@ impl Converter<'_> {
                     composition: Some(comp),
                     items: Some(&self.items),
                     effect_definitions: self.effect_definitions,
+                    grade_domain: self.grade_domain,
                 },
                 layer,
                 native_effect_size,
@@ -1531,6 +1553,7 @@ impl Converter<'_> {
             adjustment_opacity = imported_effects.adjustment_opacity;
             native_effect_ordinals = imported_effects.native_ordinals;
             fractal_blends = imported_effects.fractal_blends;
+            pending_effect_masks = imported_effects.pending_effect_masks;
             result.effects = imported_effects.effects;
             unsupported_cutout = imported_effects.unsupported_cutout;
             unsupported_sweep_cutout = imported_effects.unsupported_sweep_cutout;
@@ -1799,6 +1822,20 @@ impl Converter<'_> {
                 message,
             );
         }
+        // Effect Compositing Options reference masks imported just above.
+        for message in effects::effect_masks::resolve(
+            pending_effect_masks,
+            &layer.content,
+            &mask_import.guide_ids,
+            &mut result,
+        ) {
+            self.warn(
+                Limitation::Properties,
+                Some(comp_id),
+                Some(layer_id),
+                message,
+            );
+        }
         let mut pending_radial_sector = None;
         if purpose.includes_occurrence_pipeline() {
             let supported_plane = content_depth < MAX_GROUP_DEPTH
@@ -1961,6 +1998,17 @@ impl Converter<'_> {
             .and_then(|source| source.solid.as_ref())
             .filter(|_| record.layer_type() == 0 && !flags.null_layer && !flags.adjustment_layer)
         {
+            let super_white = solid
+                .as_ref()
+                .is_ok_and(|solid| solid.color.iter().any(|component| *component > 1.0));
+            // A 32 bpc super-white (code values above 1.0) only has a meaning in an
+            // admitted HDR working space; the HDR colour binding decodes it.
+            let solid = match solid {
+                Ok(_) if super_white && self.hdr_transfer.is_none() => {
+                    Err("invalid solid color".to_owned())
+                }
+                solid => solid.as_ref().map_err(ToString::to_string),
+            };
             match solid {
                 Ok(solid) => {
                     if solid.pixel_aspect.0 != solid.pixel_aspect.1 {
@@ -3470,6 +3518,7 @@ fn group(
         id,
         name,
         description: String::new(),
+        variables: Default::default(),
         is_hidden: false,
         parent,
         blend_mode: Default::default(),

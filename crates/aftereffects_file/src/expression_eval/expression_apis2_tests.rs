@@ -219,7 +219,7 @@ fn source_text_data_programs_copy_static_character_style() {
                 .collect::<Vec<_>>()
         )
     });
-    assert_eq!(source.font_family.as_ref(), "Helvetica");
+    assert_eq!(source.font_family, "Helvetica");
     assert_eq!(copied.font_family, source.font_family);
     assert_eq!(copied.font_style, source.font_style);
     assert_eq!(copied.font_size, source.font_size);

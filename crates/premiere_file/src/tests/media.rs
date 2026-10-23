@@ -849,6 +849,7 @@ fn one_admission_rule_maps_each_media_kind_to_its_containers() {
     let video = with_kind(Some(PrMediaKind::Video {
         codec: None,
         hdr_profile: None,
+        color_space_override: None,
     }));
     let still = with_kind(Some(PrMediaKind::Still { alpha: false }));
     let sound = with_kind(None);
@@ -1343,6 +1344,7 @@ fn native_inspection_requires_complete_selected_picture_context() {
     native.kind = crate::schema::PrMediaKind::Video {
         codec: Some(crate::schema::VideoCodec::H264),
         hdr_profile: None,
+        color_space_override: None,
     };
     native.frame_rate = FrameRate::Fps24.into();
     native.intrinsic_ticks = 6 * FrameRate::Fps24.ticks_per_frame();
@@ -1460,6 +1462,7 @@ fn unrelated_omitted_media_keeps_another_media_selected_context() {
         native.kind = crate::schema::PrMediaKind::Video {
             codec: Some(crate::schema::VideoCodec::H264),
             hdr_profile: None,
+            color_space_override: None,
         };
         native.frame_rate = FrameRate::Fps24.into();
         native.intrinsic_ticks = 6 * FrameRate::Fps24.ticks_per_frame();

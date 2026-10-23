@@ -15,7 +15,7 @@ macro_rules! define_rect_shape_wire_schema {
             roundness: ScalarProperty,
             #[serde(default = "default_true")]
             fill_enabled: bool,
-            fill_color: ColorProperty,
+            fill_color: Linkable<ColorProperty>,
             #[serde(default, skip_serializing_if = "Option::is_none")]
             fill_paint: Option<ShapePaint>,
             #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -23,7 +23,7 @@ macro_rules! define_rect_shape_wire_schema {
             #[serde(default)]
             stroke_enabled: bool,
             #[serde(skip_serializing_if = "Option::is_none")]
-            stroke_color: Option<ColorProperty>,
+            stroke_color: Option<Linkable<ColorProperty>>,
             #[serde(default)]
             stroke_width: NonNegativeProperty,
             #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -74,8 +74,10 @@ macro_rules! define_rect_shape_schema {
             pub roundness: ScalarProperty,
             /// Whether the solid fill is painted (default true).
             pub fill_enabled: bool,
-            /// Extended-sRGB fill RGB (0..64); alpha is coverage (0..1).
-            pub fill_color: ColorProperty,
+            /// Extended-sRGB fill RGB (0..64); alpha is coverage (0..1). May link
+            /// to a `color` variable.
+            #[ts(type = "[number, number, number, number] | VariableLink")]
+            pub fill_color: Linkable<ColorProperty>,
             /// Optional complete fill-paint override. Legacy rectangles omit this and
             /// derive a solid paint from [`Self::fill_color`]; gradients are stored
             /// here so the rectangle keeps its parametric size and roundness controls
@@ -93,7 +95,9 @@ macro_rules! define_rect_shape_schema {
             pub stroke_enabled: bool,
             /// Extended-sRGB stroke RGB (0..64), alpha 0..1. The stroke renders only when
             /// `strokeEnabled` is true, `strokeWidth` > 0, AND a color is present.
-            pub stroke_color: Option<ColorProperty>,
+            /// May link to a `color` variable.
+            #[ts(type = "[number, number, number, number] | VariableLink | null")]
+            pub stroke_color: Option<Linkable<ColorProperty>>,
             /// Stroke width in layer pixels (non-negative).
             pub stroke_width: NonNegativeProperty,
             /// Alternating dash/gap lengths in layer pixels; empty means solid.
@@ -104,6 +108,30 @@ macro_rules! define_rect_shape_schema {
             pub stroke_join: ShapeLineJoin,
             /// Miter limit used when [`Self::stroke_join`] is [`ShapeLineJoin::Miter`].
             pub stroke_miter_limit: ScalarProperty,
+        }
+
+        impl RectShape {
+            /// Visit each color that can link, without changing it.
+            pub fn for_each_link(&self, visit: &mut dyn FnMut(&dyn $crate::LinkSlot)) {
+                visit(&self.fill_color);
+                if let Some(color) = &self.stroke_color {
+                    visit(color);
+                }
+                if let Some(paint) = &self.fill_paint {
+                    paint.for_each_link(visit);
+                }
+            }
+
+            /// Visit each color that can link.
+            pub fn for_each_link_slot(&mut self, visit: &mut dyn FnMut(&mut dyn $crate::LinkSlot)) {
+                visit(&mut self.fill_color);
+                if let Some(color) = &mut self.stroke_color {
+                    visit(color);
+                }
+                if let Some(paint) = &mut self.fill_paint {
+                    paint.for_each_link_slot(visit);
+                }
+            }
         }
     };
 }

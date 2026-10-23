@@ -71,7 +71,9 @@ pub(super) fn records(ids: &ProjectIds, graphics_white: Option<f64>) -> Vec<Reco
         color_management_settings: graphics_white
             .map(|white| {
                 serde_json::json!({
-            "enableLogColorManagement":2,"graphicsWhiteLuminance":white,"lutInterpolationMethod":1
+            "enableLogColorManagement":2,
+            "graphicsWhiteLuminance":crate::schema::SequenceHdr::native_graphics_white(white),
+            "lutInterpolationMethod":1
         }).to_string()
             })
             .unwrap_or_else(|| records::PROJECT_COLOR_MANAGEMENT_SETTINGS.into()),

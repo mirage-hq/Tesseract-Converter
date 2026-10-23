@@ -260,7 +260,8 @@ pub(super) fn solid_rect(
                 f64::from(source.color[1]),
                 f64::from(source.color[2]),
                 1.0,
-            ],
+            ]
+            .into(),
             fill_paint: None,
             fill_blend_mode: None,
             stroke_enabled: false,

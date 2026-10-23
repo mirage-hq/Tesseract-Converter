@@ -74,14 +74,14 @@ fn edited_document(second_width: f64) -> EditableFxCompositionDocument {
             .iter()
             .find(|text| {
                 text.source_text.box_text == box_text
-                    && text.source_text.stroke_width.value() == 3.0
+                    && text.source_text.stroke_width.number() == Some(3.0)
             })
             .unwrap();
         let second = native
             .iter()
             .find(|text| {
                 text.source_text.box_text == box_text
-                    && text.source_text.stroke_width.value() == 9.0
+                    && text.source_text.stroke_width.number() == Some(9.0)
                     && text.source_text.apply_stroke
             })
             .unwrap();
@@ -107,11 +107,27 @@ fn edited_document(second_width: f64) -> EditableFxCompositionDocument {
                 vec![
                     (
                         0,
-                        PropertyValue::Color(first.source_text.stroke_color.unwrap()),
+                        PropertyValue::Color(
+                            *first
+                                .source_text
+                                .stroke_color
+                                .as_ref()
+                                .unwrap()
+                                .value()
+                                .unwrap(),
+                        ),
                     ),
                     (
                         500,
-                        PropertyValue::Color(second.source_text.stroke_color.unwrap()),
+                        PropertyValue::Color(
+                            *second
+                                .source_text
+                                .stroke_color
+                                .as_ref()
+                                .unwrap()
+                                .value()
+                                .unwrap(),
+                        ),
                     ),
                 ],
             ),
@@ -148,8 +164,8 @@ fn source_stroke_native_import_preserves_enabled_controls_and_disabled_state() {
         ]) {
             assert_eq!(text.active_range.start.as_millis(), time);
             assert_eq!(text.source_text.apply_stroke, enabled);
-            assert_eq!(text.source_text.stroke_width.value(), width);
-            assert_eq!(text.source_text.stroke_color, Some(color));
+            assert_eq!(text.source_text.stroke_width.number(), Some(width));
+            assert_eq!(text.source_text.stroke_color, Some(color.into()));
             assert!(text.source_text.stroke_over_fill);
             assert_eq!(text.source_text.text, "AB\nCD");
             assert_eq!(text.source_text.fill_color, [0.2, 0.4, 0.6, 1.0]);
@@ -181,8 +197,8 @@ fn source_stroke_full_export_consumes_editable_hold_controls_and_input_edits() {
             ]) {
                 assert_eq!(text.active_range.start.as_millis(), time);
                 assert_eq!(text.source_text.apply_stroke, enabled);
-                assert_eq!(text.source_text.stroke_width.value(), width);
-                assert_eq!(text.source_text.stroke_color, Some(color));
+                assert_eq!(text.source_text.stroke_width.number(), Some(width));
+                assert_eq!(text.source_text.stroke_color, Some(color.into()));
                 assert!(text.source_text.stroke_over_fill);
                 assert_eq!(text.source_text.text, "AB\nCD");
                 assert_eq!(text.source_text.fill_color, [0.2, 0.4, 0.6, 1.0]);

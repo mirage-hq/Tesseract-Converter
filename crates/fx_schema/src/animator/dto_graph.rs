@@ -239,7 +239,7 @@ fn validate_dependencies(entries: &[AnimationGraphEntry]) -> Result<(), Animatio
         for dependency in &entry.dependencies {
             if dependency
                 .as_property()
-                .is_some_and(|property| property.property_type().is_read_only())
+                .is_some_and(|property| property.property_type().is_ambient_dependency())
             {
                 continue;
             }

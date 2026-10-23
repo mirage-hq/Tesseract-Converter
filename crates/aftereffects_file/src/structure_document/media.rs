@@ -514,6 +514,7 @@ fn convert_image_sequence(
                 source.id
             ),
             is_hidden: false,
+            storyline: false,
             parent: Some(occurrence.id),
             blend_mode: Default::default(),
             track_matte: None,
@@ -860,14 +861,33 @@ pub(super) fn convert_resolved(
         warnings.push("AE Pixel Motion is represented by FX optical-flow frame blending; the editable mode is retained, but synthesized fractional source frames can differ from Adobe".into());
     }
 
+    let input_transform = match source.ocio_input.as_deref().map(crate::ocio::camera_input) {
+        Some(Ok(Some(camera))) => match fx_schema::ColorEncodingId::new(camera) {
+            Ok(input_encoding) => Some(fx_schema::PersistedInputTransform::supported(
+                fx_schema::InputTransform::v1(fx_schema::InputColorTransform::CameraInput {
+                    input_encoding,
+                }),
+            )),
+            Err(error) => {
+                warnings.push(format!("OCIO camera input {camera} not converted: {error}"));
+                None
+            }
+        },
+        Some(Err(reason)) => {
+            warnings.push(reason);
+            None
+        }
+        Some(Ok(None)) | None => None,
+    };
     let (layers, animations) = match descriptor.kind {
         MediaKind::StillImage => {
-            let image = ImageLayer {
+            let mut image = ImageLayer {
                 render_domain: None,
                 id,
                 name: occurrence.name.clone(),
                 description: format!("Editable AE still image from source item {}", source.id),
                 is_hidden: false,
+                storyline: false,
                 parent: Some(occurrence.id),
                 blend_mode: Default::default(),
                 track_matte: None,
@@ -885,6 +905,8 @@ pub(super) fn convert_resolved(
                     MediaFit::Contain,
                 ),
             };
+            let fx_schema::ImageSource::Asset(asset) = &mut image.source;
+            asset.input_transform = input_transform;
             (vec![FxLayer::Image(image)], Vec::new())
         }
         MediaKind::Video | MediaKind::AudioVideo => {
@@ -906,6 +928,7 @@ pub(super) fn convert_resolved(
                 description: format!("Editable AE video from source item {}", source.id),
                 metadata: None,
                 is_hidden: false,
+                storyline: false,
                 parent: Some(occurrence.id),
                 start_time: Some(0.0),
                 blend_mode: Default::default(),
@@ -932,7 +955,10 @@ pub(super) fn convert_resolved(
                 frame_blending: frame_blending.map(fx_schema::layer::FrameBlendingData::Mode),
                 motion_blur,
                 transform: identity_transform(),
-                source: VideoSource::from_asset(logical_id.clone(), None, MediaFit::Contain),
+                source: VideoSource {
+                    input_transform,
+                    ..VideoSource::from_asset(logical_id.clone(), None, MediaFit::Contain)
+                },
             };
             let mut layers = vec![FxLayer::Video(video)];
             if descriptor.kind == MediaKind::AudioVideo {

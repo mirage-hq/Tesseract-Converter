@@ -40,12 +40,16 @@ pub(crate) enum OpenExrChannels {
 /// saved colour profile of an HDR source (`None` writes the BT.709 profile).
 /// The reader leaves both unset because files are inspected after loading;
 /// export takes them from the inspected packaged video, and the writer
-/// requires the codec for `CodecType`.
+/// requires the codec for `CodecType`. `color_space_override` is the
+/// Interpret Footage Color Space Override label that export writes for a
+/// camera-log `source.inputTransform` (see `schema::color`); import reports
+/// a saved override instead of retaining it here.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PrMediaKind {
     Video {
         codec: Option<VideoCodec>,
         hdr_profile: Option<HdrProfile>,
+        color_space_override: Option<&'static str>,
     },
     /// `alpha` is the straight-alpha declaration that native `AlphaType`
     /// carries: `true` for `1`, `false` when it is absent. A Tesseract document

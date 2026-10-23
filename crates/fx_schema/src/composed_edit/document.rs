@@ -24,7 +24,9 @@ crate::define_editable_composition_schema!(
     serde(default),
     allow(dead_code),
     allow(dead_code),
-    allow(dead_code)
+    allow(dead_code),
+    serde(skip_serializing_if = "crate::Variables::is_empty"),
+    serde(skip_serializing_if = "Option::is_none")
 );
 
 fn deserialize_optional_schema_version<'de, D: serde::Deserializer<'de>>(
@@ -40,7 +42,8 @@ pub struct FXComposition(crate::stored::Stored<CompositionData>);
 
 impl<'de> Deserialize<'de> for FXComposition {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let value = Value::deserialize(deserializer)?;
+        let mut value = Value::deserialize(deserializer)?;
+        crate::static_fonts::migrate_static_fonts(&mut value);
         crate::reject_nested_color_management(&value).map_err(serde::de::Error::custom)?;
         crate::validate_render_domain_nesting(&value).map_err(serde::de::Error::custom)?;
         let composition =
@@ -72,10 +75,12 @@ impl FXComposition {
             version: None,
             id,
             name: name.into(),
+            variables: crate::Variables::new(),
             dynamics,
             layers,
             motion_blur: MotionBlurSettings::default(),
             segment_layer_ids: Vec::new(),
+            storyline_model: None,
         };
         let value = crate::stored::checked_value(&data)
             .map_err(|error| ValidationError::Wire(error.to_string()))?;
@@ -105,6 +110,29 @@ impl FXComposition {
         Ok(())
     }
 
+    /// This composition with every link replaced by the value it reads now,
+    /// for formats that have no variables.
+    pub fn bake_variables(&self) -> Result<Self, ValidationError> {
+        let mut value = self.0.wire_value().clone();
+        crate::variables::bake_composition_json(&mut value, self.variables())
+            .map_err(|error| ValidationError::Wire(error.to_string()))?;
+        Self::from_value(value)
+    }
+
+    /// Whether the composition or any Group in it defines a variable.
+    pub fn defines_variables(&self) -> bool {
+        fn any(layers: &[Layer]) -> bool {
+            layers.iter().any(|layer| {
+                layer
+                    .data()
+                    .variables()
+                    .is_some_and(|variables| !variables.is_empty())
+                    || layer.child_layers().is_some_and(any)
+            })
+        }
+        !self.variables().is_empty() || any(self.layers())
+    }
+
     pub fn clone_with_id(&self, id: CompositionId) -> Self {
         let mut value = self.0.wire_value().clone();
         value["id"] = serde_json::to_value(id).expect("composition identifiers serialize");
@@ -127,8 +155,16 @@ impl FXComposition {
     pub fn layers(&self) -> &[Layer] {
         &self.0.data().layers
     }
+    /// Variables every layer in the composition can link to.
+    pub fn variables(&self) -> &crate::Variables {
+        &self.0.data().variables
+    }
     pub fn segment_layer_ids(&self) -> &[LayerId] {
         &self.0.data().segment_layer_ids
+    }
+    /// Storyline model version declared by this composition, if any.
+    pub fn storyline_model(&self) -> Option<u32> {
+        self.0.data().storyline_model
     }
     pub fn is_segment_layer(&self, id: LayerId) -> bool {
         self.segment_layer_ids().contains(&id)
@@ -228,6 +264,9 @@ pub enum ValidationError {
     /// A graph dependency or metadata input addresses a missing layer.
     #[error("FX composition layer {0} was not found")]
     MissingLayer(LayerId),
+    /// A link names a missing variable or one of another type.
+    #[error(transparent)]
+    Variable(#[from] crate::VariableError),
     /// An asset-metadata input addresses a non-media layer.
     #[error("FX composition layer {layer_id} ({layer_type}) does not support read-only property mediaSourceAssetId")]
     UnsupportedAssetMetadataSource {

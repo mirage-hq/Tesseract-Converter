@@ -54,6 +54,7 @@ pub(super) fn image_layer(
         name,
         description: String::new(),
         is_hidden,
+        storyline: false,
         parent: None,
         blend_mode: BlendMode::Normal,
         track_matte: None,
@@ -140,7 +141,9 @@ pub(super) fn still_facts<'f>(
     source: &ImageAssetSource,
     media_facts: &'f BTreeMap<String, MediaFacts>,
 ) -> Result<std::result::Result<&'f ValidatedImage, String>> {
-    let asset_id = source.asset_id.as_str();
+    let Some(asset_id) = source.asset_id.value().map(AssetId::as_str) else {
+        return Err(unsupported("source.assetId links to a variable"));
+    };
     if asset_id.is_empty() {
         return Err(unsupported("source.assetId must be nonempty"));
     }
@@ -194,7 +197,9 @@ pub(super) fn export_image_layer(
 ) -> Result<Option<(PrVideoOccurrence, PrMedia)>> {
     let (width, height, frame_rate) = (context.width, context.height, context.frame_rate);
     let ImageSource::Asset(source) = &image.source;
-    let asset_id = source.asset_id.as_str();
+    let Some(asset_id) = source.asset_id.value().map(AssetId::as_str) else {
+        return Err(unsupported("source.assetId links to a variable"));
+    };
     let facts = match still_facts(source, context.media_facts)? {
         Ok(facts) => facts,
         Err(reason) => {
@@ -253,22 +258,36 @@ pub(super) fn export_image_layer(
             );
         }
     }
-    for (changed, field, reason) in [
-        (
-            source.input_transform.is_some(),
-            ExportField::InputTransform,
-            "input transform was not exported",
-        ),
-        // An image ignores its legacy time remap, but the field is still lost.
-        (
-            source.time_remap.is_some(),
-            ExportField::TimeRemap,
-            "time remap was not exported",
-        ),
-    ] {
-        if changed {
-            omit_field(omissions, image.id, field, record, reason);
+    let input_lut = source.input_transform.as_ref().and_then(|transform| {
+        let export = crate::export_loss::input_transform_export(
+            transform,
+            context.input_luts,
+            false,
+            context.aces,
+        );
+        if let Some(reason) = export.loss {
+            omit_field(
+                omissions,
+                image.id,
+                ExportField::InputTransform,
+                record,
+                reason,
+            );
         }
+        if export.input_lut.is_some() {
+            crate::export_loss::report_clip_input_lut_interpolation(omissions, record);
+        }
+        export.input_lut
+    });
+    // An image ignores its legacy time remap, but the field is still lost.
+    if source.time_remap.is_some() {
+        omit_field(
+            omissions,
+            image.id,
+            ExportField::TimeRemap,
+            record,
+            "time remap was not exported",
+        );
     }
     if let Some(note) = facts.colour_note() {
         omit(omissions, OmissionScope::Feature, record, note);
@@ -430,6 +449,8 @@ pub(super) fn export_image_layer(
                 } else {
                     PrMediaKind::Still { alpha: facts.alpha }
                 },
+                input_lut,
+                camera_override: None,
             }),
             audio: None,
         },

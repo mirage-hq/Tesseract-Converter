@@ -277,7 +277,7 @@ mod tests {
                 },
                 VectorContent::Paint(VectorPaintSpec::Fill {
                     paint: ShapePaint::Solid {
-                        color: [0.1, 0.2, 0.3, 1.0],
+                        color: [0.1, 0.2, 0.3, 1.0].into(),
                     },
                     fill_rule: ShapeFillRule::NonZeroWinding,
                     blend_mode: BlendMode::default(),
@@ -286,7 +286,7 @@ mod tests {
                 }),
                 VectorContent::Paint(VectorPaintSpec::Stroke {
                     paint: ShapePaint::Solid {
-                        color: [1.0, 0.0, 0.0, 1.0],
+                        color: [1.0, 0.0, 0.0, 1.0].into(),
                     },
                     blend_mode: BlendMode::default(),
                     opacity: 100.0,

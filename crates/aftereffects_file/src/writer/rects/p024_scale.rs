@@ -55,6 +55,7 @@ fn layer(occurrence: u64, source: u64, times: &[i64]) -> LayerSpec {
         audio_enabled: false,
         audio_levels_db: [-192.0; 2],
         audio_levels_animation: None,
+        ocio_input: None,
     };
     let track = NumericTrack {
         keys: times

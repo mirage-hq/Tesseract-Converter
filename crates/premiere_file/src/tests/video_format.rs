@@ -948,6 +948,7 @@ fn prores_admits_4444_for_native_import_and_keeps_other_profiles_as_candidates()
         PrMediaKind::Video {
             codec: None,
             hdr_profile: None,
+            color_space_override: None,
         },
         Cursor::new(PRORES_4444_ALPHA),
         Cursor::new(PRORES_4444_ALPHA),
@@ -963,6 +964,7 @@ fn prores_admits_4444_for_native_import_and_keeps_other_profiles_as_candidates()
             PrMediaKind::Video {
                 codec: None,
                 hdr_profile: None,
+                color_space_override: None,
             },
             Cursor::new(bytes),
             Cursor::new(bytes),

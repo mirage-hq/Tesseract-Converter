@@ -1661,11 +1661,15 @@ fn adjustment_geometry2_suffix_composes_lower_and_keeps_effect_ids_and_clocks() 
 #[test]
 fn adjustment_geometry2_suffix_reuses_lumetri_and_sharpen_payloads() {
     // Native donor controls on other hosts, explicitly grafted into this model.
-    let (lumetri, _) = crate::format::inspect_project_with_omissions(
-        include_str!("../../../tests/fixtures/human_lumetri_contrast.xml"),
-        None,
-    )
-    .unwrap();
+    // The Lumetri donor's Vignette Amount is set to -2.5 so that it also
+    // imports a vignette.
+    let native = include_str!("../../../tests/fixtures/human_lumetri_contrast.xml");
+    let amount = native
+        .find("<VideoComponentParam ObjectID=\"882\"")
+        .unwrap();
+    let start = amount + native[amount..].find(",0.,").unwrap();
+    let native = format!("{},-2.5,{}", &native[..start], &native[start + 4..]);
+    let (lumetri, _) = crate::format::inspect_project_with_omissions(&native, None).unwrap();
     let sharpen_path =
         Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/feature_sharpen_strict.prproj");
     let (sharpen, _) =
@@ -1675,11 +1679,11 @@ fn adjustment_geometry2_suffix_reuses_lumetri_and_sharpen_payloads() {
     let adjustment = project.sequences[0].video_tracks[1].clip_mut(0);
     let origin = adjustment.in_ticks;
     let mut donor = lumetri.sequences[0].video_tracks[0].clip(0).effects.clone();
-    assert_eq!(donor.len(), 6);
-    let PrEffectParams::LumetriExposure(native_exposure) = &donor[0].params else {
-        panic!("expected native Lumetri Exposure donor");
+    assert_eq!(donor.len(), 2);
+    let PrEffectParams::LumetriGrade(native_grade) = &donor[0].params else {
+        panic!("expected native Lumetri grade donor");
     };
-    assert_eq!(*native_exposure, 1.0);
+    assert_eq!(native_grade.values[2], 1.0);
     donor.push(sharpen.sequences[0].video_tracks[0].clip(3).effects[0].clone());
     for effect in &mut donor {
         for animation in &mut effect.animations {
@@ -1705,11 +1709,7 @@ fn adjustment_geometry2_suffix_reuses_lumetri_and_sharpen_payloads() {
         [
             "gaussianBlur",
             "grain",
-            "exposure",
-            "brightnessContrast",
-            "hueSaturation",
-            "temperatureTint",
-            "temperatureTint",
+            "primaryGrade",
             "vignette",
             "sharpen"
         ]
@@ -1719,17 +1719,21 @@ fn adjustment_geometry2_suffix_reuses_lumetri_and_sharpen_payloads() {
             .iter()
             .map(|effect| effect["id"].as_u64().unwrap())
             .collect::<Vec<_>>(),
-        (1..=9).collect::<Vec<_>>()
+        (1..=5).collect::<Vec<_>>()
     );
-    // 1 stop divided by 2.2 (the Lumetri display-code approximation), as stored.
-    assert_eq!(effects[2]["effect"]["exposure"], 0.454545455);
-    assert_eq!(effects[2]["effect"]["offset"], 0.0);
-    assert_eq!(effects[2]["effect"]["gammaCorrection"], 1.0);
-    assert_eq!(effects[3]["effect"]["contrast"], 25.0);
-    assert_eq!(effects[8]["effect"]["amount"], 20.0);
+    // 1 stop divided by 2.6 (the fitted Lumetri scale), as stored.
+    assert_eq!(effects[2]["effect"]["exposure"], 0.384615385);
+    // Contrast 25 divided by 360.
+    assert_eq!(effects[2]["effect"]["contrast"], 0.069444444);
+    assert_eq!(effects[4]["effect"]["amount"], 20.0);
     for (id, param, times, values) in [
-        (5, "saturation", vec![0, 2513], vec![30.0, -40.0]),
-        (9, "amount", vec![1000, 1500, 2500], vec![20.0, 80.0, 50.0]),
+        (
+            3,
+            "saturation",
+            vec![0, 2513],
+            vec![0.272727273, -0.363636364],
+        ),
+        (5, "amount", vec![1000, 1500, 2500], vec![20.0, 80.0, 50.0]),
     ] {
         let entry = document["composition"]["dynamics"]["entries"]
             .as_array()
@@ -1763,34 +1767,43 @@ fn adjustment_geometry2_suffix_reuses_lumetri_and_sharpen_payloads() {
         .filter_map(|item| item.media())
         .find(|clip| exported.media(clip).unwrap().is_adjustment())
         .unwrap();
-    assert_eq!(suffix.effects.len(), 4); // Blur, Noise, native Contrast replacement, Sharpen.
+    // Blur, Noise, one native Lumetri Color for the grade and the vignette
+    // directly after it, and Sharpen, in the FX order.
+    assert_eq!(suffix.effects.len(), 4);
     assert!(matches!(
         suffix.effects[2].params,
-        PrEffectParams::BrightnessContrast(_)
+        PrEffectParams::LumetriGrade(crate::schema::PrLumetriGrade {
+            vignette: Some([-2.5, 50.0, 50.0]),
+            ..
+        })
     ));
     assert!(matches!(
         suffix.effects[3].params,
         PrEffectParams::Sharpen(_)
     ));
     assert!(
-        reports
+        !reports
             .iter()
-            .any(|report| report.reason.contains("exposure")
-                && report.reason.contains("not exported")),
+            .any(|report| report.reason.contains("not exported")),
         "{reports:?}"
     );
     let (_, reread) = written(exported);
     let (again, _) = import(&reread);
+    // The written Lumetri rereads as the grade and the vignette.
     assert_eq!(
         again["composition"]["layers"][0]["effects"]
             .as_array()
             .unwrap()
-            .len(),
-        4
-    );
-    assert_eq!(
-        again["composition"]["layers"][0]["effects"][3]["effect"]["type"],
-        "sharpen"
+            .iter()
+            .map(|effect| effect["effect"]["type"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        [
+            "gaussianBlur",
+            "grain",
+            "primaryGrade",
+            "vignette",
+            "sharpen"
+        ]
     );
     geometry(&again["composition"]["layers"]);
 }

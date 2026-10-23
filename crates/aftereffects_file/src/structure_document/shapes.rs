@@ -915,7 +915,9 @@ impl Collector<'_> {
                 match self.static_color_alias(run, "ADBE Vector Stroke Color", control_context) {
                     Ok(Some(color)) => {
                         if let Some(stroke) = result.strokes.get_mut(stroke_index) {
-                            stroke.paint = ShapePaint::Solid { color };
+                            stroke.paint = ShapePaint::Solid {
+                                color: color.into(),
+                            };
                         }
                     }
                     Ok(None) => {}
@@ -943,7 +945,9 @@ impl Collector<'_> {
         if let Some(color) =
             self.static_color_alias(run, "ADBE Vector Fill Color", control_context)?
         {
-            fill.paint = ShapePaint::Solid { color };
+            fill.paint = ShapePaint::Solid {
+                color: color.into(),
+            };
         }
         Ok(fill)
     }
@@ -1678,7 +1682,8 @@ fn solid_fill(run: &[Chunk]) -> Result<ShapeFillStyle, String> {
                 color[1],
                 color[2],
                 color.get(3).copied().unwrap_or(1.0),
-            ],
+            ]
+            .into(),
         },
         fill_rule: if rule == 2.0 {
             ShapeFillRule::EvenOdd
@@ -1701,7 +1706,8 @@ fn solid_stroke(run: &[Chunk]) -> Result<ShapeStrokeStyle, String> {
                 color[1],
                 color[2],
                 color.get(3).copied().unwrap_or(1.0),
-            ],
+            ]
+            .into(),
         },
     )
 }
@@ -2845,6 +2851,7 @@ mod tests {
                     composition: Some(composition),
                     items: Some(&items),
                     effect_definitions: &[],
+                    grade_domain: crate::effects::color_grades::ColorGradeDomain::Legacy,
                 },
                 &owner,
                 [1920, 1080],
@@ -2877,6 +2884,7 @@ mod tests {
             let mut converter = super::super::Converter {
                 text_overrides: Default::default(),
                 effect_definitions: &[],
+                grade_domain: crate::effects::color_grades::ColorGradeDomain::Legacy,
                 expression_samples: &samples,
                 expression_evaluations: Default::default(),
                 items: project.items.iter().map(|item| (item.id, item)).collect(),
@@ -2897,6 +2905,7 @@ mod tests {
                 shape_budget: Default::default(),
                 mapped_shape_expressions: Default::default(),
                 root_progress: fx_conv::Progress::default().phase("alias occurrence", "layers", 0),
+                hdr_transfer: None,
             };
             let layers = converter
                 .composition_layers(&occurrence, LayerId::from(9_999), 0)
@@ -2961,6 +2970,7 @@ mod tests {
                 composition: Some(&local),
                 items: Some(&items),
                 effect_definitions: &[],
+                grade_domain: crate::effects::color_grades::ColorGradeDomain::Legacy,
             },
             &owner,
             [1920, 1080],
@@ -3069,6 +3079,7 @@ mod tests {
                 composition: Some(composition),
                 items: Some(&items),
                 effect_definitions: &[],
+                grade_domain: crate::effects::color_grades::ColorGradeDomain::Legacy,
             },
             &owner,
             [1920, 1080],
@@ -3130,6 +3141,7 @@ mod tests {
                         composition: Some(&composition),
                         items: Some(&items),
                         effect_definitions: &[],
+                        grade_domain: crate::effects::color_grades::ColorGradeDomain::Legacy,
                     },
                     &owner,
                     [1920, 1080],

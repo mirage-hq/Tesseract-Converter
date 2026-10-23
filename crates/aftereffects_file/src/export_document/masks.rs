@@ -136,6 +136,7 @@ pub(crate) fn lower(
                             feather_track: None,
                             opacity_track: None,
                             expansion_track: None,
+                            source_mask: None,
                         });
                         output.text_path_index = Some(index);
                         output.consumed_guides.insert(options.path_layer);
@@ -283,6 +284,7 @@ fn lower_mask(
             feather_track,
             opacity_track,
             expansion_track,
+            source_mask: Some(mask.id),
         },
         guide,
         diagnostics,

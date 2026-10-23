@@ -560,7 +560,7 @@ fn paired_gradient_rect_import_has_separate_pinned_oracles_but_no_combined_nativ
     }));
     let stroke = fresh_import(&PAINTS, 32, "IMPORT_PAINT_STROKE_COLOR");
     assert!(geometry(&stroke).iter().any(|layer| match layer {
-        FxLayer::Rect(rect) => rect.rect.stroke_color == Some([0.25, 0.875, 0.125, 1.0]),
+        FxLayer::Rect(rect) => rect.rect.stroke_color == Some([0.25, 0.875, 0.125, 1.0].into()),
         _ => false,
     }));
 }

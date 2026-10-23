@@ -88,6 +88,12 @@ impl HeadRecord {
         u32_at(&self.0, 4)
     }
 
+    /// The After Effects release that saved the project, unpacked from the
+    /// producer word with the field layout [`HeadRecord::empty_ae26`] writes.
+    pub fn producer_version(&self) -> ProducerVersion {
+        ProducerVersion::from_word(self.producer_version_word())
+    }
+
     /// The next project-wide item identifier.
     pub fn next_item_id(&self) -> u32 {
         u32_at(&self.0, 12)
@@ -96,6 +102,43 @@ impl HeadRecord {
     /// Encodes the header, retaining reserved fields.
     pub fn encode(&self) -> [u8; 20] {
         self.0
+    }
+}
+
+/// The After Effects release recorded in a project's producer word.
+///
+/// The major version is split across the top bits (high part) and a three-bit
+/// low part; the minor version and build number sit below them. Natively saved
+/// fixtures decode as 25.6 build 101, 26.0 build 67, 26.3 build 87 and 26.5
+/// build 89. Platform and reserved bits are not interpreted.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ProducerVersion {
+    /// Major release, e.g. 26 for After Effects 2026.
+    pub major: u32,
+    /// Minor release.
+    pub minor: u32,
+    /// Build number.
+    pub build: u32,
+}
+
+impl ProducerVersion {
+    /// Unpacks a `head`/`svap` producer word.
+    pub fn from_word(word: u32) -> Self {
+        Self {
+            major: ((word >> 26) & 31) * 8 + ((word >> 19) & 7),
+            minor: (word >> 15) & 15,
+            build: word & 511,
+        }
+    }
+}
+
+impl std::fmt::Display for ProducerVersion {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "After Effects {}.{} build {}",
+            self.major, self.minor, self.build
+        )
     }
 }
 
@@ -422,7 +465,7 @@ impl CompositionRecord {
 
 #[cfg(test)]
 mod tests {
-    use super::{CompositionRecord, HeadRecord, ItemRecord};
+    use super::{CompositionRecord, HeadRecord, ItemRecord, ProducerVersion};
     use crate::{aep::Project, rifx::Chunk, timing::Duration24};
 
     fn descendants(chunks: &[Chunk], kind: [u8; 4]) -> Vec<&[u8]> {
@@ -475,6 +518,29 @@ mod tests {
     }
 
     #[test]
+    fn producer_words_of_native_fixtures_and_older_producers_decode_to_releases() {
+        // Words of natively saved committed fixtures (25.6, 26.0, 26.3, 26.5)
+        // and a constructed After Effects 17.0 word (major high part 2, low
+        // part 1), the release that writes project format 93.
+        for (word, major, minor, build) in [
+            (0x0f0b_0665, 25, 6, 101),
+            (0x0f10_0643, 26, 0, 67),
+            (0x0f11_8657, 26, 3, 87),
+            (0x0f92_8659, 26, 5, 89),
+            ((2 << 26) | (1 << 19) | 26, 17, 0, 26),
+        ] {
+            assert_eq!(
+                ProducerVersion::from_word(word),
+                ProducerVersion {
+                    major,
+                    minor,
+                    build
+                }
+            );
+        }
+    }
+
+    #[test]
     fn constructors_encode_distinct_valid_fields_without_specimen_identity() {
         let head = HeadRecord::empty_ae26(13);
         assert_eq!(
@@ -482,10 +548,18 @@ mod tests {
             97
         );
         assert_eq!(head.next_item_id(), 13);
-        let producer = head.producer_version_word();
-        assert_eq!(((producer >> 26) & 31) * 8 + ((producer >> 19) & 7), 26);
-        assert_eq!((producer >> 15) & 15, 5);
-        assert_eq!(producer & 255, 89);
+        assert_eq!(
+            head.producer_version(),
+            ProducerVersion {
+                major: 26,
+                minor: 5,
+                build: 89
+            }
+        );
+        assert_eq!(
+            head.producer_version().to_string(),
+            "After Effects 26.5 build 89"
+        );
         assert_eq!(&head.encode()[18..20], &1_u16.to_be_bytes());
         let item = ItemRecord::empty_ae26_composition(1).unwrap();
         assert_eq!((item.item_type(), item.id()), (4, 1));

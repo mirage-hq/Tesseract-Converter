@@ -222,6 +222,9 @@ pub(crate) struct FootageSpec {
     /// Static native Audio Levels, in decibels per channel.
     pub(crate) audio_levels_db: [f64; 2],
     pub(crate) audio_levels_animation: Option<NumericTrack>,
+    /// The OCIO input colourspace declaration (`CLRS` `ocsp`) of the source in
+    /// an OCIO colour-managed project; `None` keeps the config's file rules.
+    pub(crate) ocio_input: Option<String>,
 }
 
 /// Validates the complete typed footage contract before IDs are published.
@@ -636,7 +639,10 @@ pub(crate) fn source_item(spec: &FootageSpec, id: u32) -> Result<Chunk, AepWrite
                     raw(*b"Mcsp", [1]),
                     raw(*b"Utf8", Vec::new()),
                     raw(*b"ocsp", [1]),
-                    raw(*b"Utf8", Vec::new()),
+                    raw(
+                        *b"Utf8",
+                        spec.ocio_input.clone().unwrap_or_default().into_bytes(),
+                    ),
                     raw(*b"hdrm", [1]),
                     raw(*b"Utf8", b"{}".to_vec()),
                 ],
@@ -1233,6 +1239,7 @@ mod tests {
             audio_enabled,
             audio_levels_db: [0.0; 2],
             audio_levels_animation: None,
+            ocio_input: None,
         }
     }
 

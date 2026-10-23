@@ -55,6 +55,13 @@ nothing kept by native output is lost. Diagnostics include
 `HYBRID-LINKED-PREFERRED` or `HYBRID-NATIVE-RETAINED` as applicable.
 This is a **layer-count heuristic**, not an area-, duration- or pixel-fidelity metric.
 
+A native Premiere effect whose only difference is a declared mapping
+approximation is not a picture loss. In particular an FX `primaryGrade` or
+`vignette` exported as a native Lumetri Color keeps the graded picture in the
+`.prproj` at exact 24, 25, 30, 50 and 60 fps too, instead of a linked AEP;
+clamps, unwritten keys and other losses still route (see the Lumetri Color
+section of [`formats/premiere.md`](formats/premiere.md)).
+
 Genuinely empty source roots have a separate bounded linked representation. They
 must not be confused with nonempty sources whose content was omitted.
 

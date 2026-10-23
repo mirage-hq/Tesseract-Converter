@@ -1,5 +1,6 @@
-//! Pinned Lumetri controls with a supplementary edited nested FX host.
-//! This verifies generated linked-native structure, not Adobe acceptance.
+//! The pinned Lumetri host with explicitly authored FX color effects in a
+//! supplementary edited nested FX host. This verifies generated linked-native
+//! structure, not Lumetri import or Adobe acceptance.
 use super::*;
 
 fn edited_group_document(parent: &Path) -> Value {
@@ -19,15 +20,25 @@ fn edited_group_document(parent: &Path) -> Value {
         .project_json()
         .unwrap();
     let mut video = document["composition"]["layers"][0].clone();
-    let mut effects = video.as_object_mut().unwrap().remove("effects").unwrap();
-    assert_eq!(effects.as_array().unwrap().len(), 6);
-    // 1 stop divided by 2.2 (the Lumetri display-code approximation), as stored.
-    assert_eq!(effects[0]["effect"]["exposure"], 0.454545455);
-    assert_eq!(effects[0]["effect"]["offset"], 0.0);
-    assert_eq!(effects[0]["effect"]["gammaCorrection"], 1.0);
-    assert_eq!(effects[2]["effect"]["saturation"], 30.0);
-    assert_eq!(effects[3]["effect"]["temperature"], 0.0);
-    assert_eq!(effects[4]["effect"]["tint"], 0.0);
+    let imported = video.as_object_mut().unwrap().remove("effects").unwrap();
+    assert_eq!(imported[0]["effect"]["type"], "primaryGrade");
+    // Lumetri import now yields one primaryGrade. This Group test keeps its
+    // linked coverage of the separate FX color effects by authoring them.
+    let mut effects = json!([
+        {"id":1,"enabled":true,"effect":{"type":"exposure","exposure":0.454545455,"offset":0.0,"gammaCorrection":1.0}},
+        {"id":2,"enabled":true,"effect":{"type":"brightnessContrast","brightness":0.0,"contrast":25.0}},
+        {"id":3,"enabled":true,"effect":{"type":"hueSaturation","hue":0.0,"saturation":30.0,"lightness":0.0,"colorize":false,"colorizeHue":0.0,"colorizeSaturation":0.0,"colorizeLightness":0.0}},
+        {"id":4,"enabled":true,"effect":{"type":"temperatureTint","temperature":0.0,"tint":0.0}},
+        {"id":5,"enabled":true,"effect":{"type":"temperatureTint","temperature":0.0,"tint":0.0}},
+        {"id":6,"enabled":true,"effect":{"type":"vignette","amount":0.0,"radius":0.5,"feather":0.5}}
+    ]);
+    document["composition"]["dynamics"]["entries"] = json!([{
+        "target":{"kind":"effectProperty","effectId":3,"paramName":"saturation"},
+        "animator":{"type":"keyframes","enabled":true,"keyframes":[
+            {"id":"saturation-start","layerTime":0,"value":{"type":"float","value":30.0},"easing":{"type":"linear"}},
+            {"id":"saturation-end","layerTime":2513,"value":{"type":"float","value":-40.0},"easing":{"type":"linear"}}
+        ]}
+    }]);
     effects[0]["effect"]["exposure"] = json!(2.0);
     effects[1]["effect"]["contrast"] = json!(40.0);
     effects[3]["effect"]["temperature"] = json!(40.0);
@@ -129,7 +140,7 @@ fn human_lumetri_nested_edited_linked_export_keeps_controls_defaults_and_keys() 
     for approximation in [
         "Animated saturation-only",
         "intermediate clipping",
-        "Pin Highlights",
+        "Vignette section carries it",
     ] {
         assert!(
             report
@@ -181,7 +192,7 @@ fn human_lumetri_nested_edited_linked_export_keeps_controls_defaults_and_keys() 
             "ADBE Exposure2",
             "ADBE Exposure2",
             "ADBE Exposure2",
-            "CS Vignette"
+            "ADBE Lumetri"
         ]
     );
     assert!(effects.iter().all(|(_, enabled)| *enabled));
@@ -282,7 +293,21 @@ fn human_lumetri_fractional_and_ae_fallback_report_replacement_omissions() {
                 .any(|note| note.code == "HYBRID-NATIVE-RETAINED"),
             "{report:?}"
         );
-        for effect in ["exposure", "hueSaturation", "temperatureTint", "vignette"] {
+        // The vignette is written as a native Lumetri Color Vignette.
+        assert!(
+            report.diagnostics.iter().any(|note| note
+                .message
+                .contains("vignette exports as a native Lumetri Color Vignette")),
+            "{report:?}"
+        );
+        // A static exposure exports as ProcAmp; the keyed effects do not.
+        assert!(
+            report.diagnostics.iter().any(|note| note
+                .message
+                .contains("exposure exports as 2 native ProcAmp")),
+            "{report:?}"
+        );
+        for effect in ["hueSaturation", "temperatureTint"] {
             assert!(
                 report
                     .diagnostics

@@ -30,6 +30,7 @@ use crate::{
     writer::footage::{NativeFrameRate, NativeSourceFormat, RelativeMediaPath},
 };
 
+mod input_transform;
 mod p001_video_compositing;
 mod remapped_opacity;
 mod rounded_visibility;

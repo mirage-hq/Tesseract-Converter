@@ -236,6 +236,7 @@ fn item(id: u32, item_name: &str, composition: Composition) -> ProjectItem {
         solid: None,
         media: None,
         native_media: None,
+        ocio_input: None,
     }
 }
 
@@ -254,6 +255,7 @@ fn solid_item(id: u32, dimensions: [u16; 2]) -> ProjectItem {
         })),
         media: None,
         native_media: None,
+        ocio_input: None,
     }
 }
 

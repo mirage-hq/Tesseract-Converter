@@ -1,26 +1,14 @@
-//! Saved native controls in a synthetic host; structural linked export, not
-//! independent Adobe acceptance, original placement or colour fidelity.
+//! Saved native Lumetri controls through the CLI: import to one editable
+//! primaryGrade, then edited export. At 30 and 29.97 fps the automatic hybrid
+//! keeps the native Premiere picture: the Lumetri grade's declared scale
+//! approximation is not a routing loss, as the linked After Effects route
+//! would write the same Lumetri controls. The written Lumetri Color is
+//! inspected and reimported. Structural only; not Adobe acceptance or colour
+//! fidelity.
 use super::*;
 
-fn graded_layers(value: &Value) -> Vec<&Value> {
-    let mut found = Vec::new();
-    if let Some(layers) = value["layers"].as_array() {
-        for layer in layers {
-            if layer["effects"].as_array().is_some_and(|effects| {
-                effects
-                    .iter()
-                    .any(|effect| effect["effect"]["type"] == "exposure")
-            }) {
-                found.push(layer);
-            }
-            found.extend(graded_layers(layer));
-        }
-    }
-    found
-}
-
 #[test]
-fn human_lumetri_import_and_edited_linked_export_keep_controls_and_saturation_keys() {
+fn human_lumetri_import_keeps_primary_grade_keys_and_edited_export_writes_native_lumetri() {
     let parent = tempfile::tempdir().unwrap();
     let source = parent.path().join("source.prproj");
     let bytes = fs::read(fixture("human_lumetri_contrast.xml")).unwrap();
@@ -34,143 +22,121 @@ fn human_lumetri_import_and_edited_linked_export_keep_controls_and_saturation_ke
     )
     .unwrap();
     let imported = parent.path().join("imported");
-    import_premiere(&request(&source, &imported, ConversionMode::Write)).unwrap();
+    let report = import_premiere(&request(&source, &imported, ConversionMode::Write)).unwrap();
+    assert!(
+        report
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("one editable primaryGrade")),
+        "{report:?}"
+    );
     let archive = TesseractFile::open(imported.join("project.tsrct")).unwrap();
-    let original = archive.project_json().unwrap();
-    for edited in [false, true] {
-        let mut document = original.clone();
-        let effects = document["composition"]["layers"][0]["effects"]
-            .as_array_mut()
-            .unwrap();
-        assert_eq!(effects.len(), 6);
-        // 1 stop divided by 2.2 (the Lumetri display-code approximation), as stored.
-        assert_eq!(effects[0]["effect"]["exposure"], 0.454545455);
-        assert_eq!(effects[0]["effect"]["offset"], 0.0);
-        assert_eq!(effects[0]["effect"]["gammaCorrection"], 1.0);
-        assert_eq!(effects[1]["effect"]["contrast"], 25.0);
-        assert_eq!(effects[2]["effect"]["saturation"], 30.0);
-        if edited {
-            effects[0]["effect"]["exposure"] = json!(2.0);
-            effects[1]["effect"]["contrast"] = json!(40.0);
-            effects[2]["effect"]["saturation"] = json!(45.0);
-        }
-        let entries = document["composition"]["dynamics"]["entries"]
-            .as_array_mut()
-            .unwrap();
-        assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0]["target"]["paramName"], "saturation");
-        let keys = entries[0]["animator"]["keyframes"].as_array_mut().unwrap();
-        assert_eq!(keys[0]["value"]["value"], 30.0);
-        assert_eq!(keys[1]["value"]["value"], -40.0);
-        if edited {
-            keys[0]["value"]["value"] = json!(45.0);
-            keys[0]["layerTime"] = json!(500);
-            keys[1]["value"]["value"] = json!(-65.0);
-            keys[1]["layerTime"] = json!(1750);
-        }
+    let mut document = archive.project_json().unwrap();
+    let effects = document["composition"]["layers"][0]["effects"]
+        .as_array_mut()
+        .unwrap();
+    // The pinned Vignette section is at its defaults: no vignette.
+    assert_eq!(effects.len(), 1);
+    let grade = &mut effects[0]["effect"];
+    assert_eq!(grade["type"], "primaryGrade");
+    assert_eq!(grade["semanticVersion"], 1);
+    // 1 stop divided by 2.6 (the fitted Lumetri scale), as stored.
+    assert_eq!(grade["exposure"], 0.384615385);
+    assert_eq!(grade["contrast"], 0.069444444);
+    assert_eq!(grade["saturation"], 0.272727273);
+    grade["contrast"] = json!(0.25);
+    let entries = document["composition"]["dynamics"]["entries"]
+        .as_array_mut()
+        .unwrap();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0]["target"]["paramName"], "saturation");
+    let keys = entries[0]["animator"]["keyframes"].as_array_mut().unwrap();
+    assert_eq!(keys[0]["value"]["value"], 0.272727273);
+    assert_eq!(keys[1]["value"]["value"], -0.363636364);
+    assert_eq!(keys[1]["layerTime"], 2513);
+    keys[1]["value"]["value"] = json!(-0.65);
 
-        let input = parent.path().join(format!("edited-{edited}.tsrct"));
-        TesseractFileBuilder::from_project_json(&serde_json::to_vec(&document).unwrap())
-            .unwrap()
-            .add_asset(
-                "premiere-video-1",
-                fixture("video-30fps-10s.mp4"),
-                AssetKind::Video,
-            )
-            .unwrap()
-            .write(&input)
-            .unwrap();
-        let output = parent.path().join(format!("export-{edited}"));
+    let input = parent.path().join("edited.tsrct");
+    archive_with_video(&document, &input, "video-30fps-10s.mp4");
+    for rate in [
+        premiere_file::FrameRate::Fps30,
+        premiere_file::FrameRate::Fps30000Over1001,
+    ] {
+        let output = parent
+            .path()
+            .join(format!("exported-{}", rate.ticks_per_frame()));
         let report = export(
             &request(&input, &output, ConversionMode::Write),
-            &Default::default(),
+            &PremiereExportOptions {
+                hdr: None,
+                frame_rate: Some(rate),
+            },
         )
         .unwrap();
         assert!(
-            report
-                .diagnostics
-                .iter()
-                .any(|diagnostic| diagnostic.code == "HYBRID-EXPERIMENTAL"),
-            "{report:?}"
-        );
-        assert!(
-            report
-                .diagnostics
-                .iter()
-                .any(|diagnostic| diagnostic.message.contains("Animated saturation-only")),
-            "{report:?}"
-        );
-        assert!(
-            !report.diagnostics.iter().any(|diagnostic| diagnostic
+            report.diagnostics.iter().any(|note| note
                 .message
-                .contains("hueSaturation / saturation")
-                && diagnostic.message.contains("animation omitted")),
-            "{report:?}"
+                .contains("primaryGrade exports as a native Lumetri Color")),
+            "{rate}: {report:?}"
         );
-        let project = output.join("project.prproj");
-        assert!(xml(&project).contains("./media/ae-0001/compositions.aep"));
-        assert!(!xml(&project).contains("AE.ADBE Lumetri"));
-        let reimported = parent.path().join(format!("reimport-{edited}"));
-        import_premiere(&request(&project, &reimported, ConversionMode::Write)).unwrap();
-        let result = TesseractFile::open(reimported.join("project.tsrct"))
+        assert!(
+            !report.diagnostics.iter().any(
+                |note| note.message.contains("not exported") || note.code.starts_with("HYBRID")
+            ),
+            "{rate}: {report:?}"
+        );
+        let prproj = output.join("project.prproj");
+        let text = xml(&prproj);
+        // One native Lumetri Color; no linked After Effects scope.
+        assert_eq!(
+            text.matches("<MatchName>AE.ADBE Lumetri</MatchName>")
+                .count(),
+            1,
+            "{rate}"
+        );
+        assert!(!text.contains(".aep"), "{rate}");
+        assert!(!output.join("media/ae-0001").exists(), "{rate}");
+        assert!(!text.contains("JsScript"));
+        // The edited Contrast 0.25 is saved as Contrast 90.
+        assert!(text.contains("<StartKeyframe>-91445760000000000,90.,0,0,0,0,0,0</StartKeyframe>"));
+
+        let reimported = parent
+            .path()
+            .join(format!("reimported-{}", rate.ticks_per_frame()));
+        import_premiere(&request(&prproj, &reimported, ConversionMode::Write)).unwrap();
+        let again = TesseractFile::open(reimported.join("project.tsrct"))
             .unwrap()
             .project_json()
             .unwrap();
-        let selected = graded_layers(&result["composition"]);
-        assert_eq!(selected.len(), 1, "{result}");
-        let effects = &selected[0]["effects"];
-        assert_eq!(
-            effects[0]["effect"]["exposure"],
-            if edited { 2.0 } else { 0.454545455 }
+        let effects = again["composition"]["layers"][0]["effects"]
+            .as_array()
+            .unwrap();
+        // The written Lumetri's neutral Vignette section adds no effect.
+        assert_eq!(effects.len(), 1, "{rate}: {effects:?}");
+        let grade = &effects[0]["effect"];
+        assert_eq!(grade["type"], "primaryGrade");
+        assert!(
+            (grade["contrast"].as_f64().unwrap() - 0.25).abs() < 1e-9,
+            "{grade}"
         );
-        assert_eq!(
-            effects[1]["effect"]["contrast"],
-            if edited { 40.0 } else { 25.0 }
+        assert!(
+            (grade["exposure"].as_f64().unwrap() - 0.384615385).abs() < 1e-8,
+            "{grade}"
         );
-        assert_eq!(
-            effects[2]["effect"]["saturation"],
-            if edited { 45.0 } else { 30.0 }
+        assert!(
+            (grade["saturation"].as_f64().unwrap() - 0.272727273).abs() < 1e-9,
+            "{grade}"
         );
-        assert_eq!(effects[2]["effect"]["type"], "vibrance");
-        assert_eq!(effects[2]["effect"]["vibrance"], 0.0);
-        fn tracks(value: &Value, result: &mut Vec<Value>) {
-            if let Some(object) = value.as_object() {
-                if object
-                    .get("target")
-                    .is_some_and(|target| target["paramName"] == "saturation")
-                {
-                    result.push(value["animator"]["keyframes"].clone());
-                }
-                for value in object.values() {
-                    tracks(value, result);
-                }
-            } else if let Some(array) = value.as_array() {
-                for value in array {
-                    tracks(value, result);
-                }
-            }
-        }
-        let mut actual = Vec::new();
-        tracks(&result, &mut actual);
-        assert_eq!(actual.len(), 1, "{result}");
-        let keys = actual[0].as_array().unwrap();
+        let entries = again["composition"]["dynamics"]["entries"]
+            .as_array()
+            .unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0]["target"]["paramName"], "saturation");
+        let keys = entries[0]["animator"]["keyframes"].as_array().unwrap();
         assert_eq!(keys.len(), 2);
-        for (key, time, value) in [
-            (
-                &keys[0],
-                if edited { 500 } else { 0 },
-                if edited { 45.0 } else { 30.0 },
-            ),
-            (
-                &keys[1],
-                if edited { 1750 } else { 2513 },
-                if edited { -65.0 } else { -40.0 },
-            ),
-        ] {
-            assert_eq!(key["layerTime"], time);
-            assert_eq!(key["value"]["value"], value);
-        }
-        assert!(!result.to_string().contains("JsScript"));
+        assert!((keys[0]["value"]["value"].as_f64().unwrap() - 0.272727273).abs() < 1e-9);
+        assert!((keys[1]["value"]["value"].as_f64().unwrap() + 0.65).abs() < 1e-9);
+        assert!((keys[1]["layerTime"].as_i64().unwrap() - 2513).abs() <= 1);
     }
     assert_eq!(fs::read(source).unwrap(), bytes);
 }

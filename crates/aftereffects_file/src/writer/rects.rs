@@ -1049,6 +1049,7 @@ fn emit_timeline(
                 &mut output,
                 &options.effects,
                 effect_owner_size(layer, composition_size),
+                options.masks.len(),
                 super::keyframes::PropertyClock::for_rate(frame_rate)?,
             )?;
             let mut styles = options.styles.clone();
@@ -1546,15 +1547,14 @@ fn validate(rect: &VectorRectSpec) -> Result<(), AepWriteError> {
             "invalid native Rectangle geometry or stroke",
         ));
     }
-    if rect
+    if !rect
         .fill_color
         .iter()
         .chain(&rect.stroke_color)
-        .flat_map(|color| color.iter())
-        .any(|v| !v.is_finite() || !(0.0..=1.0).contains(v))
+        .all(|color| super::paint_color_is_valid(color))
     {
         return Err(AepWriteError::Invalid(
-            "native Rectangle color lies outside 0..=1",
+            "native Rectangle color is not finite nonnegative RGB with alpha in 0..=1",
         ));
     }
     let t = &rect.transform;
@@ -3349,6 +3349,7 @@ mod hierarchy_writer_tests {
                 audio_enabled: false,
                 audio_levels_db: [0.0; 2],
                 audio_levels_animation: None,
+                ocio_input: None,
             },
             TransformAnimations::default(),
         )

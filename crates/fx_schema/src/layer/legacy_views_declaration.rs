@@ -15,6 +15,8 @@ macro_rules! define_legacy_media_views_schema {
             description: &'a str,
             #[serde(skip_serializing_if = "std::ops::Not::not")]
             is_hidden: bool,
+            #[serde(skip_serializing_if = "std::ops::Not::not")]
+            storyline: bool,
             #[serde(skip_serializing_if = "Option::is_none")]
             parent: Option<LayerId>,
             blend_mode: BlendMode,
@@ -61,7 +63,7 @@ macro_rules! define_legacy_media_views_schema {
         #[derive(Serialize)]
         #[serde(rename_all = "camelCase")]
         struct $asset<'a> {
-            asset_id: &'a AssetId,
+            asset_id: $crate::Linkable<&'a AssetId>,
             kind: MediaSourceKind,
             #[serde(skip_serializing_if = "Option::is_none")]
             input_transform: Option<&'a crate::PersistedInputTransform>,

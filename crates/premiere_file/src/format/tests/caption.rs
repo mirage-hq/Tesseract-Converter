@@ -408,7 +408,7 @@ fn corpus_caption_cues_keep_their_shadows_and_report_their_font_once() {
         .collect();
     assert_eq!(text.len(), 42);
     for text in text {
-        assert_eq!(text.source_text.font_family.as_ref(), "MinionPro-Regular");
+        assert_eq!(text.source_text.font_family, "MinionPro-Regular");
         assert_eq!(text.source_text.font_style.as_ref(), "");
         // The cue's shadow is the layer's one effect.
         let [effect] = text.effects.as_slice() else {

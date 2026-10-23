@@ -60,6 +60,8 @@ mod tests {
             enabled: true,
             declarations: Declarations::Readable,
             parameters: Vec::new(),
+            compositing: Ok(Default::default()),
+            arbitrary: Vec::new(),
         }
     }
 
@@ -69,6 +71,7 @@ mod tests {
         emboss.parameters.push(DecodedParameter {
             match_name: "ADBE Emboss-0004".into(),
             declared_kind: Ok(Some(2)),
+            declared_label: None,
             unset_path: false,
             numeric: Ok(NumericProperty {
                 values: vec![0.0],
