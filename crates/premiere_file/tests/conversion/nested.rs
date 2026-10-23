@@ -875,7 +875,7 @@ fn group_motion_blur_preserves_native_content_controls_order_and_disabled_state(
 
 #[cfg(feature = "ffmpeg-library")]
 #[test]
-fn group_motion_blur_reports_repaired_labels_but_not_empty_owners() {
+fn group_motion_blur_reports_repaired_labels_and_empty_placeholder_owners() {
     use premiere_file::{ExportField, ExportLossKind, ExportLossSource, Premiere};
 
     let dir = tempfile::tempdir().unwrap();
@@ -892,7 +892,9 @@ fn group_motion_blur_reports_repaired_labels_but_not_empty_owners() {
             document["composition"]["layers"][0]["masks"] = json!([]);
         } else {
             // An invalid label is generated without losing the current child
-            // picture, while a genuinely empty owner remains unretained.
+            // picture. A childless owner is an empty template placeholder:
+            // it is retained as an empty nested sequence, so its blur loss is
+            // reported as well.
             document["composition"]["layers"][0]["name"] = json!("");
         }
         let archive = root.join(format!("invalid-group-{empty}.tsrct"));
@@ -915,19 +917,14 @@ fn group_motion_blur_reports_repaired_labels_but_not_empty_owners() {
             })
             .collect::<Vec<_>>();
         owners.sort_unstable();
-        assert_eq!(
-            owners,
-            if empty { vec![20] } else { vec![10, 20] },
-            "{report:?}"
-        );
+        assert_eq!(owners, vec![10, 20], "{report:?}");
         if empty {
             assert!(
-                report.diagnostics.iter().any(|note| note.scope
-                    == premiere_file::OmissionScope::Occurrence
-                    && note.record.starts_with("layer 10 (")
-                    && note
-                        .reason
-                        .contains("group with no exportable video was not exported")),
+                !report
+                    .diagnostics
+                    .iter()
+                    .any(|note| note.record.starts_with("layer 10 (")
+                        && note.scope == premiere_file::OmissionScope::Occurrence),
                 "{report:?}"
             );
         } else {
@@ -942,10 +939,7 @@ fn group_motion_blur_reports_repaired_labels_but_not_empty_owners() {
             .stage_with_picture_replacements(root, &root.join(format!("native-{empty}")), &[])
             .unwrap();
         let xml = read_xml(&staged.directory().join("project.prproj"));
-        assert_eq!(
-            xml.matches("<Sequence ObjectUID=").count(),
-            if empty { 2 } else { 3 }
-        );
+        assert_eq!(xml.matches("<Sequence ObjectUID=").count(), 3);
         if !empty {
             let parsed = roxmltree::Document::parse(&xml).unwrap();
             let generated = parsed

@@ -762,6 +762,7 @@ fn still_project(alpha: bool, name: &str) -> PrProjectFile {
     PrProjectFile::from_sequences(
         vec![PrSequence {
             hdr: None,
+            aces: None,
             native_frame_ticks: None,
             audio: Vec::new(),
             id: None,
@@ -770,6 +771,7 @@ fn still_project(alpha: bool, name: &str) -> PrProjectFile {
             video_tracks: vec![PrVideoTrack::media([occurrence(0), occurrence(4 * TICKS)])],
             timeline_end_ticks: 7 * TICKS,
             adjustment_only_template: false,
+            empty_template_placeholder: false,
             frame_rate: FrameRate::Fps30,
             width: 1920,
             height: 1080,
@@ -793,6 +795,8 @@ fn still_project(alpha: bool, name: &str) -> PrProjectFile {
                     width: 1920,
                     height: 1080,
                     kind: PrMediaKind::Still { alpha },
+                    input_lut: None,
+                    camera_override: None,
                 }),
                 audio: None,
             },
@@ -880,6 +884,7 @@ fn writer_rejects_media_with_the_other_kind_of_extension() {
         .kind = PrMediaKind::Video {
         codec: None,
         hdr_profile: None,
+        color_space_override: None,
     };
     let error = project_xml(&project).unwrap_err().to_string();
     assert!(

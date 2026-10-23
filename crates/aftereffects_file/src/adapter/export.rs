@@ -77,7 +77,7 @@ impl ExportFromTesseract for AfterEffects {
                 staged.directory(),
                 &destination,
                 &staged.publication_files,
-                &staged.font_files,
+                &[staged.font_files.as_slice(), staged.lut_files.as_slice()].concat(),
             )?;
         }
         Ok(staged.report)

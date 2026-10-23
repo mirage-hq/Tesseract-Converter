@@ -15,6 +15,35 @@
       "source_sha256": "672afb582fa532bff7c4a3c610891da762d962bd66bd22845f147b45cfeb9f6a",
       "receipt": "radial_wipe_definition-receipt.json: fresh default effect readback",
       "receipt_sha256": "fcf5eb5aa145cd9e39789fd1293b37dff2c703e4e8d3e3ab561f161a3f4f543f"
+    },
+    "apply_color_lut": {
+      "source": "color_ae_apply_color_lut.aep: human-authored in the Adobe After Effects 26.5 UI (Apply Color LUT with color_warm_tint.cube picked in its file dialog, defaults otherwise; scripted authoring is impossible because applying the effect opens a modal LUT picker)",
+      "source_sha256": "14f90c67d05cb6ce3897d913ba3e2727573751d829d547fcf149875616f60f2a",
+      "original_sha256": "a180f7621526bb05ad1ed6df771ea6a513fd61841e450709a9102f6a3a343806",
+      "source_note": "the committed fixture differs from the human-saved bytes (original_sha256) only in the footage alias path, replaced at equal length; the declarations come from its EfdG/EfDf",
+      "receipt": "color_ae_apply_color_lut-receipt.json: fresh-host ExtendScript readback of the saved AEP (headless-adobe run_jsx, color_ae_apply_color_lut-readback.jsx)",
+      "readback_script_sha256": "ac1cd99a1ae0a2d5413f99b0acf26a6cb0fe92fe98cb35b9f052fdd530a9a55d",
+      "receipt_sha256": "3a7c978f35e67e46e3b6dc84688d5b481701539b71ff369dc7d7a7b9823e34ce",
+      "effects": [
+        "ADBE Apply Color LUT2"
+      ]
+    },
+    "color_correction": {
+      "source": "color_catalog.aep: Adobe After Effects 26.5x89 managed-JSX authored defaults",
+      "source_sha256": "caff55042f4615b2d2db3eac9e3e59e79f905a59324c9560630e9c9779cc42c9",
+      "author_script": "color_catalog.jsx (mode author)",
+      "author_script_sha256": "529a3176ab0a00b605f4f656bc483c2876ce8b2029eec6e95a4b59687f2009e7",
+      "author_script_note": "the author run used an earlier color_catalog.jsx revision (author_script_sha256) whose author-mode code is identical to the committed file; the committed color_catalog.jsx is the later revision that added readback mode and hashes to readback_script_sha256",
+      "receipt": "color_catalog-receipt.json: fresh-host ExtendScript readback of the saved AEP",
+      "readback_script_sha256": "8e3832c2f4e2ff367d05f20cb74758784d6b890f12d777b7c05bcc75bc730fb6",
+      "receipt_sha256": "45fdf9fa997d8997796d7d43e9247f32794d9d6ce7f127a8d9839f026b84be60",
+      "effects": [
+        "ADBE Lumetri",
+        "ADBE CurvesCustom",
+        "ADBE Color Balance 2",
+        "ADBE CHANNEL MIXER",
+        "ADBE SelectiveColor"
+      ]
     }
   },
   "effects": [
@@ -16132,6 +16161,10035 @@
           "defaults": [
             0
           ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Effect Built In Params",
+          "label": "",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 9,
+          "reserved": [
+            0,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [],
+          "point_relative": false
+        }
+      ]
+    },
+    {
+      "match_name": "ADBE Apply Color LUT2",
+      "name": "Apply Color LUT",
+      "parameters": [
+        {
+          "match_name": "ADBE Apply Color LUT2-0000",
+          "label": "",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 0,
+          "reserved": [
+            2,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            4294967295,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Apply Color LUT2-0001",
+          "label": "Using: color_warm_tint.cube",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 13,
+          "reserved": [
+            34,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Apply Color LUT2-0002",
+          "label": "",
+          "header_flags": [
+            0,
+            8,
+            0
+          ],
+          "kind": 14,
+          "reserved": [
+            2,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Effect Built In Params",
+          "label": "",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 9,
+          "reserved": [
+            0,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [],
+          "point_relative": false
+        }
+      ]
+    },
+    {
+      "match_name": "ADBE Lumetri",
+      "name": "Lumetri Color",
+      "parameters": [
+        {
+          "match_name": "ADBE Lumetri-0000",
+          "label": "",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 0,
+          "reserved": [
+            2,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            4294967295,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0001",
+          "label": "Blob",
+          "header_flags": [
+            0,
+            520,
+            0
+          ],
+          "kind": 11,
+          "reserved": [
+            2,
+            0
+          ],
+          "payload_words": [
+            16777216,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0062",
+          "label": " ",
+          "header_flags": [
+            0,
+            512,
+            0
+          ],
+          "kind": 4,
+          "reserved": [
+            66,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": "High Dynamic Range",
+          "defaults": [
+            0
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0002",
+          "label": "Basic Correction",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 13,
+          "reserved": [
+            34,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0003",
+          "label": " ",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 4,
+          "reserved": [
+            66,
+            0
+          ],
+          "payload_words": [
+            1,
+            16777216,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": "Active",
+          "defaults": [
+            1
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0004",
+          "label": " ",
+          "header_flags": [
+            0,
+            520,
+            0
+          ],
+          "kind": 11,
+          "reserved": [
+            2,
+            0
+          ],
+          "payload_words": [
+            67108864,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0095",
+          "label": " ",
+          "header_flags": [
+            0,
+            520,
+            0
+          ],
+          "kind": 11,
+          "reserved": [
+            2,
+            0
+          ],
+          "payload_words": [
+            1593835520,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0005",
+          "label": "Input LUT",
+          "header_flags": [
+            0,
+            4,
+            0
+          ],
+          "kind": 7,
+          "reserved": [
+            66,
+            0
+          ],
+          "payload_words": [
+            1,
+            786433,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": "None|[Custom]|Browse...|(-|ALEXA_Default_LogC2Rec709|AlexaV3_K1S1_LogC2Video_DCIP3_EE|AlexaV3_K1S1_LogC2Video_Rec709_EE|AMIRA_Default_LogC2Rec709|ARRI_Universal_DCI|ARRI_Universal_HD|D-21_delogC_EI0200_B1|Phantom_Rec709_Gamma",
+          "defaults": [
+            1
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0127",
+          "label": "Input LUT",
+          "header_flags": [
+            0,
+            520,
+            0
+          ],
+          "kind": 7,
+          "reserved": [
+            66,
+            0
+          ],
+          "payload_words": [
+            1,
+            786433,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": "None|[Custom]|Browse...|(-|ALEXA_Default_LogC2Rec709|AlexaV3_K1S1_LogC2Video_DCIP3_EE|AlexaV3_K1S1_LogC2Video_Rec709_EE|AMIRA_Default_LogC2Rec709|ARRI_Universal_DCI|ARRI_Universal_HD|D-21_delogC_EI0200_B1|Phantom_Rec709_Gamma",
+          "defaults": [
+            1
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0063",
+          "label": "HDR White",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 10,
+          "reserved": [
+            0,
+            0
+          ],
+          "payload_words": [
+            1079574528,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            1120403456,
+            1148846080,
+            1120403456,
+            1148846080,
+            1120403456,
+            0,
+            0,
+            0,
+            16777216,
+            64,
+            0
+          ],
+          "popup": null,
+          "defaults": [
+            100
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0120",
+          "label": " ",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 15,
+          "reserved": [
+            66,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": "Auto",
+          "defaults": [],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0119",
+          "label": " ",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 15,
+          "reserved": [
+            66,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": "Reset",
+          "defaults": [],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0123",
+          "label": "Intensity",
+          "header_flags": [
+            0,
+            512,
+            0
+          ],
+          "kind": 10,
+          "reserved": [
+            96,
+            0
+          ],
+          "payload_words": [
+            1078525952,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            1120403456,
+            0,
+            1120403456,
+            1112014848,
+            65536,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [
+            50
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0006",
+          "label": "Color",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 13,
+          "reserved": [
+            2,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0094",
+          "label": "White Balance",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 5,
+          "reserved": [
+            98,
+            0
+          ],
+          "payload_words": [
+            4290822336,
+            4290822336,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [
+            0.75294117647059,
+            0.75294117647059,
+            0.75294117647059,
+            1
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0007",
+          "label": "Temperature",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 10,
+          "reserved": [
+            96,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            3281387520,
+            1133903872,
+            3267887104,
+            1120403456,
+            0,
+            65536,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [
+            0
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0008",
+          "label": "Tint",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 10,
+          "reserved": [
+            96,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            3281387520,
+            1133903872,
+            3267887104,
+            1120403456,
+            0,
+            65536,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [
+            0
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0020",
+          "label": "Saturation",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 10,
+          "reserved": [
+            96,
+            0
+          ],
+          "payload_words": [
+            1079574528,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            1133903872,
+            0,
+            1128792064,
+            1120403456,
+            65536,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [
+            100
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0009",
+          "label": "",
+          "header_flags": [
+            0,
+            8,
+            0
+          ],
+          "kind": 14,
+          "reserved": [
+            2,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0010",
+          "label": "Light",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 13,
+          "reserved": [
+            2,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0011",
+          "label": "Exposure",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 10,
+          "reserved": [
+            96,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            3235905536,
+            1088421888,
+            3231711232,
+            1084227584,
+            0,
+            65536,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [
+            0
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0012",
+          "label": "Contrast",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 10,
+          "reserved": [
+            96,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            3272998912,
+            1125515264,
+            3267887104,
+            1120403456,
+            0,
+            65536,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [
+            0
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0013",
+          "label": "Highlights",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 10,
+          "reserved": [
+            96,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            3272998912,
+            1125515264,
+            3267887104,
+            1120403456,
+            0,
+            65536,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [
+            0
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0014",
+          "label": "Shadows",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 10,
+          "reserved": [
+            96,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            3272998912,
+            1125515264,
+            3267887104,
+            1120403456,
+            0,
+            65536,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [
+            0
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0015",
+          "label": "Whites",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 10,
+          "reserved": [
+            96,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            3272998912,
+            1125515264,
+            3267887104,
+            1120403456,
+            0,
+            65536,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [
+            0
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0016",
+          "label": "Blacks",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 10,
+          "reserved": [
+            96,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            3272998912,
+            1125515264,
+            3267887104,
+            1120403456,
+            0,
+            65536,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [
+            0
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0064",
+          "label": "HDR Specular",
+          "header_flags": [
+            0,
+            512,
+            0
+          ],
+          "kind": 10,
+          "reserved": [
+            32,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            3272998912,
+            1125515264,
+            3267887104,
+            1120403456,
+            0,
+            65536,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [
+            0
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0017",
+          "label": " ",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 15,
+          "reserved": [
+            66,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": "Reset",
+          "defaults": [],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0018",
+          "label": " ",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 15,
+          "reserved": [
+            66,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": "Auto",
+          "defaults": [],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0019",
+          "label": "",
+          "header_flags": [
+            0,
+            8,
+            0
+          ],
+          "kind": 14,
+          "reserved": [
+            2,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0021",
+          "label": "",
+          "header_flags": [
+            0,
+            8,
+            0
+          ],
+          "kind": 14,
+          "reserved": [
+            2,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0022",
+          "label": "Creative",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 13,
+          "reserved": [
+            34,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0023",
+          "label": " ",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 4,
+          "reserved": [
+            98,
+            0
+          ],
+          "payload_words": [
+            1,
+            16777216,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": "Active",
+          "defaults": [
+            1
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0024",
+          "label": " ",
+          "header_flags": [
+            0,
+            520,
+            0
+          ],
+          "kind": 11,
+          "reserved": [
+            2,
+            0
+          ],
+          "payload_words": [
+            402653184,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0096",
+          "label": " ",
+          "header_flags": [
+            0,
+            520,
+            0
+          ],
+          "kind": 11,
+          "reserved": [
+            2,
+            0
+          ],
+          "payload_words": [
+            1610612736,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0025",
+          "label": "Look",
+          "header_flags": [
+            0,
+            4,
+            0
+          ],
+          "kind": 7,
+          "reserved": [
+            66,
+            0
+          ],
+          "payload_words": [
+            1,
+            4521985,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": "None|[Custom]|Browse...|(-|CineSpace2383sRGB6bit|Fuji ETERNA 250D Fuji 3510 (by Adobe)|Fuji ETERNA 250D Kodak 2395 (by Adobe)|Fuji F125 Kodak 2393 (by Adobe)|Fuji F125 Kodak 2395 (by Adobe)|Fuji REALA 500D Kodak 2393 (by Adobe)|Kodak 5205 Fuji 3510 (by Adobe)|Kodak 5218 Kodak 2383 (by Adobe)|Kodak 5218 Kodak 2395 (by Adobe)|Monochrome Fuji ETERNA 250D Kodak 2395 (by Adobe)|Monochrome Kodak 5205 Fuji 3510 (by Adobe)|Monochrome Kodak 5218 Kodak 2395 (by Adobe)|SL BIG|SL BIG HDR|SL BIG LDR|SL BIG MINUS BLUE|SL BLEACH HDR|SL BLEACH LDR|SL BLEACH NDR|SL BLUE COLD|SL BLUE DAY4NITE|SL BLUE ICE|SL BLUE INTENSE|SL BLUE MOON|SL BLUE STEEL|SL CLEAN FUJI A HDR|SL CLEAN FUJI A LDR|SL CLEAN FUJI A NDR|SL CLEAN FUJI B|SL CLEAN FUJI B SOFT|SL CLEAN FUJI C|SL CLEAN KODAK A HDR|SL CLEAN KODAK A LDR|SL CLEAN KODAK A NDR|SL CLEAN KODAK B|SL CLEAN KODAK B SOFT|SL CLEAN KODAK B ULTRASOFT|SL CLEAN KODAK C|SL CLEAN KODAK C HDR|SL CLEAN STRAIGHT HDR|SL CLEAN STRAIGHT LDR|SL CLEAN STRAIGHT NDR|SL CROSS HDR|SL CROSS LDR|SL CROSS NDR|SL GOLD HEAT|SL GOLD ORANGE|SL GOLD RUSH HDR|SL GOLD RUSH LDR|SL GOLD TOBACCO|SL GOLD WESTERN|SL IRON HDR|SL IRON LDR|SL IRON NDR|SL MATRIX BLUE|SL MATRIX GREEN|SL MATRIX MARS|SL NEUTRAL START|SL NOIR 1965|SL NOIR HDR|SL NOIR LDR|SL NOIR NOUVELLE|SL NOIR NOUVELLE RED|SL NOIR RED WAVE|SL NOIR TRI-X",
+          "defaults": [
+            1
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0128",
+          "label": "Look",
+          "header_flags": [
+            0,
+            520,
+            0
+          ],
+          "kind": 7,
+          "reserved": [
+            66,
+            0
+          ],
+          "payload_words": [
+            1,
+            4521985,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": "None|[Custom]|Browse...|(-|CineSpace2383sRGB6bit|Fuji ETERNA 250D Fuji 3510 (by Adobe)|Fuji ETERNA 250D Kodak 2395 (by Adobe)|Fuji F125 Kodak 2393 (by Adobe)|Fuji F125 Kodak 2395 (by Adobe)|Fuji REALA 500D Kodak 2393 (by Adobe)|Kodak 5205 Fuji 3510 (by Adobe)|Kodak 5218 Kodak 2383 (by Adobe)|Kodak 5218 Kodak 2395 (by Adobe)|Monochrome Fuji ETERNA 250D Kodak 2395 (by Adobe)|Monochrome Kodak 5205 Fuji 3510 (by Adobe)|Monochrome Kodak 5218 Kodak 2395 (by Adobe)|SL BIG|SL BIG HDR|SL BIG LDR|SL BIG MINUS BLUE|SL BLEACH HDR|SL BLEACH LDR|SL BLEACH NDR|SL BLUE COLD|SL BLUE DAY4NITE|SL BLUE ICE|SL BLUE INTENSE|SL BLUE MOON|SL BLUE STEEL|SL CLEAN FUJI A HDR|SL CLEAN FUJI A LDR|SL CLEAN FUJI A NDR|SL CLEAN FUJI B|SL CLEAN FUJI B SOFT|SL CLEAN FUJI C|SL CLEAN KODAK A HDR|SL CLEAN KODAK A LDR|SL CLEAN KODAK A NDR|SL CLEAN KODAK B|SL CLEAN KODAK B SOFT|SL CLEAN KODAK B ULTRASOFT|SL CLEAN KODAK C|SL CLEAN KODAK C HDR|SL CLEAN STRAIGHT HDR|SL CLEAN STRAIGHT LDR|SL CLEAN STRAIGHT NDR|SL CROSS HDR|SL CROSS LDR|SL CROSS NDR|SL GOLD HEAT|SL GOLD ORANGE|SL GOLD RUSH HDR|SL GOLD RUSH LDR|SL GOLD TOBACCO|SL GOLD WESTERN|SL IRON HDR|SL IRON LDR|SL IRON NDR|SL MATRIX BLUE|SL MATRIX GREEN|SL MATRIX MARS|SL NEUTRAL START|SL NOIR 1965|SL NOIR HDR|SL NOIR LDR|SL NOIR NOUVELLE|SL NOIR NOUVELLE RED|SL NOIR RED WAVE|SL NOIR TRI-X",
+          "defaults": [
+            1
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0129",
+          "label": " ",
+          "header_flags": [
+            0,
+            520,
+            0
+          ],
+          "kind": 11,
+          "reserved": [
+            2,
+            0
+          ],
+          "payload_words": [
+            2164260864,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0130",
+          "label": "Color Space",
+          "header_flags": [
+            0,
+            36,
+            0
+          ],
+          "kind": 7,
+          "reserved": [
+            66,
+            0
+          ],
+          "payload_words": [
+            29,
+            2293789,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": "None|ACEScct|Apple Log/Rec. 2020|Apple Log/Wide Gamut|ARRI LogC3/Wide Gamut3|ARRI LogC4/Wide Gamut4|Canon Log/Cinema Gamut|Canon Log2/Cinema Gamut|Canon Log3/Cinema Gamut|DCDM X'Y'Z'|DJI D-Log/D-Gamut|Fuji F-Log/Rec. 2020|Fuji F-Log2/F-GamutC|Fuji F-Log2/Rec. 2020|Leica L-Log/Rec. 2020|Nikon N-Log/Rec2020|P3-D65 HLG|P3-D65 PQ|Panasonic V-Log/V-Gamut|Rec. 2020|Rec. 2020 (Scene)|Rec. 2100 HLG|Rec. 2100 HLG (Scene)|Rec. 2100 PQ|Rec. 2100 PQ (Scene)|Rec. 601 (NTSC)|Rec. 601 (PAL)|Rec. 709|Rec. 709 (Scene)|Red Log3G10/Wide Gamut|Sony S-Log/S-Gamut|Sony S-Log2/S-Gamut|Sony S-Log3/S-Gamut3|Sony S-Log3/S-Gamut3.Cine|sRGB",
+          "defaults": [
+            29
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0026",
+          "label": "Intensity",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 10,
+          "reserved": [
+            32,
+            0
+          ],
+          "payload_words": [
+            1079574528,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            1128792064,
+            0,
+            1128792064,
+            1120403456,
+            65536,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [
+            100
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0027",
+          "label": "Adjustments",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 13,
+          "reserved": [
+            2,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0028",
+          "label": "Faded Film",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 10,
+          "reserved": [
+            32,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            1125515264,
+            0,
+            1120403456,
+            0,
+            65536,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [
+            0
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0029",
+          "label": "Sharpen",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 10,
+          "reserved": [
+            32,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            3267887104,
+            1120403456,
+            3267887104,
+            1120403456,
+            0,
+            65536,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [
+            0
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0030",
+          "label": "Vibrance",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 10,
+          "reserved": [
+            32,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            3267887104,
+            1120403456,
+            3267887104,
+            1120403456,
+            0,
+            65536,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [
+            0
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0031",
+          "label": "Saturation",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 10,
+          "reserved": [
+            32,
+            0
+          ],
+          "payload_words": [
+            1079574528,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            1133903872,
+            0,
+            1128792064,
+            1120403456,
+            65536,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [
+            100
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0032",
+          "label": "Split Toning",
+          "header_flags": [
+            0,
+            2,
+            47186040
+          ],
+          "kind": 11,
+          "reserved": [
+            0,
+            0
+          ],
+          "payload_words": [
+            536870912,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0033",
+          "label": "Tint Balance",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 10,
+          "reserved": [
+            32,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            3272998912,
+            1125515264,
+            3267887104,
+            1120403456,
+            0,
+            65536,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [
+            0
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0034",
+          "label": "",
+          "header_flags": [
+            0,
+            8,
+            0
+          ],
+          "kind": 14,
+          "reserved": [
+            2,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0035",
+          "label": "",
+          "header_flags": [
+            0,
+            8,
+            0
+          ],
+          "kind": 14,
+          "reserved": [
+            2,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0036",
+          "label": "Curves",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 13,
+          "reserved": [
+            34,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0037",
+          "label": " ",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 4,
+          "reserved": [
+            98,
+            0
+          ],
+          "payload_words": [
+            1,
+            16777216,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": "Active",
+          "defaults": [
+            1
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0038",
+          "label": "RGB Curves",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 13,
+          "reserved": [
+            2,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0118",
+          "label": " ",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 4,
+          "reserved": [
+            66,
+            0
+          ],
+          "payload_words": [
+            1,
+            16777216,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": "Active",
+          "defaults": [
+            1
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0065",
+          "label": "HDR Range",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 10,
+          "reserved": [
+            0,
+            0
+          ],
+          "payload_words": [
+            1079574528,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            1120403456,
+            1176256512,
+            1120403456,
+            1176256512,
+            1120403456,
+            0,
+            0,
+            0,
+            16777216,
+            16448,
+            0
+          ],
+          "popup": null,
+          "defaults": [
+            100
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0039",
+          "label": "RGB Curve",
+          "header_flags": [
+            0,
+            2,
+            45875480
+          ],
+          "kind": 11,
+          "reserved": [
+            2,
+            0
+          ],
+          "payload_words": [
+            654311424,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0040",
+          "label": "",
+          "header_flags": [
+            0,
+            8,
+            0
+          ],
+          "kind": 14,
+          "reserved": [
+            2,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0041",
+          "label": "Hue Saturation Curves",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 13,
+          "reserved": [
+            2,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0104",
+          "label": " ",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 4,
+          "reserved": [
+            66,
+            0
+          ],
+          "payload_words": [
+            1,
+            16777216,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": "Active",
+          "defaults": [
+            1
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0113",
+          "label": "Hue (vs Sat) Selector",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 5,
+          "reserved": [
+            98,
+            0
+          ],
+          "payload_words": [
+            4278190081,
+            4278190081,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [
+            0,
+            0,
+            0.00392156862745,
+            1
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0042",
+          "label": "Hue vs Sat",
+          "header_flags": [
+            0,
+            2,
+            32768216
+          ],
+          "kind": 11,
+          "reserved": [
+            2,
+            0
+          ],
+          "payload_words": [
+            704643072,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0105",
+          "label": " ",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 4,
+          "reserved": [
+            66,
+            0
+          ],
+          "payload_words": [
+            1,
+            16777216,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": "Active",
+          "defaults": [
+            1
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0114",
+          "label": "Hue (vs Hue) Selector",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 5,
+          "reserved": [
+            98,
+            0
+          ],
+          "payload_words": [
+            4278190081,
+            4278190081,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [
+            0,
+            0,
+            0.00392156862745,
+            1
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0106",
+          "label": "Hue vs Hue",
+          "header_flags": [
+            0,
+            2,
+            32768216
+          ],
+          "kind": 11,
+          "reserved": [
+            2,
+            0
+          ],
+          "payload_words": [
+            1778384896,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0107",
+          "label": " ",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 4,
+          "reserved": [
+            66,
+            0
+          ],
+          "payload_words": [
+            1,
+            16777216,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": "Active",
+          "defaults": [
+            1
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0115",
+          "label": "Hue (vs Luma) Selector",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 5,
+          "reserved": [
+            98,
+            0
+          ],
+          "payload_words": [
+            4278190081,
+            4278190081,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [
+            0,
+            0,
+            0.00392156862745,
+            1
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0108",
+          "label": "Hue vs Luma",
+          "header_flags": [
+            0,
+            2,
+            32768216
+          ],
+          "kind": 11,
+          "reserved": [
+            2,
+            0
+          ],
+          "payload_words": [
+            1811939328,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0109",
+          "label": " ",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 4,
+          "reserved": [
+            66,
+            0
+          ],
+          "payload_words": [
+            1,
+            16777216,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": "Active",
+          "defaults": [
+            1
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0116",
+          "label": "Luma (vs Sat) Selector",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 5,
+          "reserved": [
+            98,
+            0
+          ],
+          "payload_words": [
+            4278190081,
+            4278190081,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [
+            0,
+            0,
+            0.00392156862745,
+            1
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0110",
+          "label": "Luma vs Sat",
+          "header_flags": [
+            0,
+            2,
+            32768216
+          ],
+          "kind": 11,
+          "reserved": [
+            2,
+            0
+          ],
+          "payload_words": [
+            1845493760,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0111",
+          "label": " ",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 4,
+          "reserved": [
+            66,
+            0
+          ],
+          "payload_words": [
+            1,
+            16777216,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": "Active",
+          "defaults": [
+            1
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0117",
+          "label": "Sat (vs Sat) Selector",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 5,
+          "reserved": [
+            98,
+            0
+          ],
+          "payload_words": [
+            4278190081,
+            4278190081,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [
+            0,
+            0,
+            0.00392156862745,
+            1
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0112",
+          "label": "Sat vs Sat",
+          "header_flags": [
+            0,
+            2,
+            32768216
+          ],
+          "kind": 11,
+          "reserved": [
+            2,
+            0
+          ],
+          "payload_words": [
+            1879048192,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0043",
+          "label": "",
+          "header_flags": [
+            0,
+            8,
+            0
+          ],
+          "kind": 14,
+          "reserved": [
+            2,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0044",
+          "label": "",
+          "header_flags": [
+            0,
+            8,
+            0
+          ],
+          "kind": 14,
+          "reserved": [
+            2,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0045",
+          "label": "Color Wheels",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 13,
+          "reserved": [
+            34,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0046",
+          "label": " ",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 4,
+          "reserved": [
+            98,
+            0
+          ],
+          "payload_words": [
+            1,
+            16777216,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": "Active",
+          "defaults": [
+            1
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0101",
+          "label": " ",
+          "header_flags": [
+            0,
+            520,
+            0
+          ],
+          "kind": 15,
+          "reserved": [
+            66,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": "Comparison View",
+          "defaults": [],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0102",
+          "label": " ",
+          "header_flags": [
+            0,
+            520,
+            0
+          ],
+          "kind": 4,
+          "reserved": [
+            66,
+            0
+          ],
+          "payload_words": [
+            1,
+            16777216,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": "Face Detection",
+          "defaults": [
+            1
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0103",
+          "label": " ",
+          "header_flags": [
+            0,
+            520,
+            0
+          ],
+          "kind": 15,
+          "reserved": [
+            66,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": "Apply Match",
+          "defaults": [],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0066",
+          "label": "HDR White",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 10,
+          "reserved": [
+            0,
+            0
+          ],
+          "payload_words": [
+            1079574528,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            1120403456,
+            1148846080,
+            1120403456,
+            1148846080,
+            1120403456,
+            0,
+            0,
+            0,
+            16777216,
+            64,
+            0
+          ],
+          "popup": null,
+          "defaults": [
+            100
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0047",
+          "label": "Wheels",
+          "header_flags": [
+            0,
+            2,
+            47186160
+          ],
+          "kind": 11,
+          "reserved": [
+            0,
+            0
+          ],
+          "payload_words": [
+            788529152,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0048",
+          "label": "",
+          "header_flags": [
+            0,
+            8,
+            0
+          ],
+          "kind": 14,
+          "reserved": [
+            2,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0067",
+          "label": "HSL Secondary",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 13,
+          "reserved": [
+            34,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0068",
+          "label": " ",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 4,
+          "reserved": [
+            98,
+            0
+          ],
+          "payload_words": [
+            1,
+            16777216,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": "Active",
+          "defaults": [
+            1
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0069",
+          "label": "Key",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 13,
+          "reserved": [
+            34,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0070",
+          "label": "Set color",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 5,
+          "reserved": [
+            98,
+            0
+          ],
+          "payload_words": [
+            4278190080,
+            4278190080,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0071",
+          "label": "Add color",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 5,
+          "reserved": [
+            98,
+            0
+          ],
+          "payload_words": [
+            4278190080,
+            4278190080,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0072",
+          "label": "Remove color",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 5,
+          "reserved": [
+            98,
+            0
+          ],
+          "payload_words": [
+            4278190080,
+            4278190080,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0073",
+          "label": "HSL Sliders",
+          "header_flags": [
+            0,
+            2,
+            327680150
+          ],
+          "kind": 11,
+          "reserved": [
+            32,
+            0
+          ],
+          "payload_words": [
+            1224736768,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0074",
+          "label": " ",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 4,
+          "reserved": [
+            66,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": "Show Mask",
+          "defaults": [
+            0
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0075",
+          "label": " ",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 7,
+          "reserved": [
+            34,
+            0
+          ],
+          "payload_words": [
+            1,
+            196609,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": "Color/Gray|Color/Black|White/Black",
+          "defaults": [
+            1
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0076",
+          "label": " ",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 4,
+          "reserved": [
+            2,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": "Invert Mask",
+          "defaults": [
+            0
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0077",
+          "label": " ",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 15,
+          "reserved": [
+            66,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": "Reset",
+          "defaults": [],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0078",
+          "label": " ",
+          "header_flags": [
+            0,
+            512,
+            0
+          ],
+          "kind": 15,
+          "reserved": [
+            66,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": " ",
+          "defaults": [],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0079",
+          "label": " ",
+          "header_flags": [
+            0,
+            520,
+            0
+          ],
+          "kind": 14,
+          "reserved": [
+            66,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0080",
+          "label": "Refine",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 13,
+          "reserved": [
+            34,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0081",
+          "label": "Denoise",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 10,
+          "reserved": [
+            32,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            1120403456,
+            0,
+            1120403456,
+            0,
+            65536,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [
+            0
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0082",
+          "label": "Blur",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 10,
+          "reserved": [
+            32,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            1148846080,
+            0,
+            1106247680,
+            0,
+            65536,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [
+            0
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0083",
+          "label": "Blur",
+          "header_flags": [
+            0,
+            8,
+            0
+          ],
+          "kind": 14,
+          "reserved": [
+            34,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0084",
+          "label": "Correction",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 13,
+          "reserved": [
+            34,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0085",
+          "label": "Color Wheels",
+          "header_flags": [
+            0,
+            2,
+            47186176
+          ],
+          "kind": 11,
+          "reserved": [
+            32,
+            0
+          ],
+          "payload_words": [
+            1426063360,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0093",
+          "label": " ",
+          "header_flags": [
+            0,
+            520,
+            65537
+          ],
+          "kind": 11,
+          "reserved": [
+            2,
+            0
+          ],
+          "payload_words": [
+            1560281088,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0086",
+          "label": "Temperature",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 10,
+          "reserved": [
+            32,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            3281387520,
+            1133903872,
+            3267887104,
+            1120403456,
+            0,
+            65536,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [
+            0
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0087",
+          "label": "Tint",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 10,
+          "reserved": [
+            32,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            3281387520,
+            1133903872,
+            3267887104,
+            1120403456,
+            0,
+            65536,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [
+            0
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0088",
+          "label": "Contrast",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 10,
+          "reserved": [
+            32,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            3272998912,
+            1125515264,
+            3267887104,
+            1120403456,
+            0,
+            65536,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [
+            0
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0089",
+          "label": "Sharpen",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 10,
+          "reserved": [
+            32,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            3267887104,
+            1120403456,
+            3267887104,
+            1120403456,
+            0,
+            65536,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [
+            0
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0090",
+          "label": "Saturation",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 10,
+          "reserved": [
+            32,
+            0
+          ],
+          "payload_words": [
+            1079574528,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            1133903872,
+            0,
+            1128792064,
+            1120403456,
+            65536,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [
+            100
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0091",
+          "label": "Saturation",
+          "header_flags": [
+            0,
+            8,
+            0
+          ],
+          "kind": 14,
+          "reserved": [
+            34,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0092",
+          "label": "",
+          "header_flags": [
+            0,
+            8,
+            0
+          ],
+          "kind": 14,
+          "reserved": [
+            2,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0049",
+          "label": "Vignette",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 13,
+          "reserved": [
+            34,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0050",
+          "label": " ",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 4,
+          "reserved": [
+            98,
+            0
+          ],
+          "payload_words": [
+            1,
+            16777216,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": "Active",
+          "defaults": [
+            1
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0051",
+          "label": "Amount",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 10,
+          "reserved": [
+            32,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            3231711232,
+            1084227584,
+            3225419776,
+            1077936128,
+            0,
+            65536,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [
+            0
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0052",
+          "label": "Midpoint",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 10,
+          "reserved": [
+            32,
+            0
+          ],
+          "payload_words": [
+            1078525952,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            1120403456,
+            0,
+            1120403456,
+            1112014848,
+            65536,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [
+            50
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0053",
+          "label": "Roundness",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 10,
+          "reserved": [
+            32,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            3267887104,
+            1120403456,
+            3267887104,
+            1120403456,
+            0,
+            65536,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [
+            0
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0054",
+          "label": "Feather",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 10,
+          "reserved": [
+            32,
+            0
+          ],
+          "payload_words": [
+            1078525952,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            1120403456,
+            0,
+            1120403456,
+            1112014848,
+            65536,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [
+            50
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0055",
+          "label": "",
+          "header_flags": [
+            0,
+            8,
+            0
+          ],
+          "kind": 14,
+          "reserved": [
+            2,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0056",
+          "label": "SpeedGrade Custom",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 13,
+          "reserved": [
+            2,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0057",
+          "label": "Custom Layer",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 4,
+          "reserved": [
+            66,
+            0
+          ],
+          "payload_words": [
+            1,
+            16777216,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": "Active",
+          "defaults": [
+            1
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0058",
+          "label": "unused",
+          "header_flags": [
+            0,
+            512,
+            0
+          ],
+          "kind": 15,
+          "reserved": [
+            66,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": "unused",
+          "defaults": [],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0059",
+          "label": "unused",
+          "header_flags": [
+            0,
+            512,
+            0
+          ],
+          "kind": 15,
+          "reserved": [
+            66,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": "unused",
+          "defaults": [],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0060",
+          "label": " ",
+          "header_flags": [
+            0,
+            520,
+            0
+          ],
+          "kind": 11,
+          "reserved": [
+            2,
+            0
+          ],
+          "payload_words": [
+            1006632960,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0061",
+          "label": "",
+          "header_flags": [
+            0,
+            8,
+            0
+          ],
+          "kind": 14,
+          "reserved": [
+            2,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0097",
+          "label": "",
+          "header_flags": [
+            0,
+            512,
+            0
+          ],
+          "kind": 4,
+          "reserved": [
+            128,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": "Legacy Tone And Saturation",
+          "defaults": [
+            0
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0098",
+          "label": "Embedded LUTs",
+          "header_flags": [
+            0,
+            520,
+            0
+          ],
+          "kind": 11,
+          "reserved": [
+            2,
+            0
+          ],
+          "payload_words": [
+            1644167168,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0099",
+          "label": "Media Embedded LUT type",
+          "header_flags": [
+            0,
+            520,
+            0
+          ],
+          "kind": 11,
+          "reserved": [
+            2,
+            0
+          ],
+          "payload_words": [
+            1660944384,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0100",
+          "label": "Media Embedded Lut blob",
+          "header_flags": [
+            0,
+            520,
+            0
+          ],
+          "kind": 11,
+          "reserved": [
+            2,
+            0
+          ],
+          "payload_words": [
+            1677721600,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0121",
+          "label": "SemanticAutoTone Progress",
+          "header_flags": [
+            0,
+            520,
+            0
+          ],
+          "kind": 10,
+          "reserved": [
+            0,
+            0
+          ],
+          "payload_words": [
+            3220176896,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            3212836864,
+            1065353216,
+            0,
+            1065353216,
+            3212836864,
+            65536,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [
+            -1
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0122",
+          "label": "Auto Tone Analytics Data",
+          "header_flags": [
+            0,
+            520,
+            0
+          ],
+          "kind": 11,
+          "reserved": [
+            2,
+            0
+          ],
+          "payload_words": [
+            2046820352,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0124",
+          "label": " ",
+          "header_flags": [
+            0,
+            520,
+            0
+          ],
+          "kind": 4,
+          "reserved": [
+            2,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": "Auto Color Active...",
+          "defaults": [
+            0
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0125",
+          "label": "LUTAsset",
+          "header_flags": [
+            0,
+            520,
+            0
+          ],
+          "kind": 11,
+          "reserved": [
+            2,
+            0
+          ],
+          "payload_words": [
+            2097152000,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Lumetri-0126",
+          "label": "LookAsset",
+          "header_flags": [
+            0,
+            520,
+            0
+          ],
+          "kind": 11,
+          "reserved": [
+            2,
+            0
+          ],
+          "payload_words": [
+            2113929216,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Effect Built In Params",
+          "label": "",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 9,
+          "reserved": [
+            0,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [],
+          "point_relative": false
+        }
+      ]
+    },
+    {
+      "match_name": "ADBE CurvesCustom",
+      "name": "Curves",
+      "parameters": [
+        {
+          "match_name": "ADBE CurvesCustom-0000",
+          "label": "",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 0,
+          "reserved": [
+            2,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            4294967295,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE CurvesCustom-0002",
+          "label": "Channel:",
+          "header_flags": [
+            0,
+            4,
+            0
+          ],
+          "kind": 7,
+          "reserved": [
+            66,
+            0
+          ],
+          "payload_words": [
+            1,
+            327681,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": "RGB|Red|Green|Blue|Alpha",
+          "defaults": [
+            1
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE CurvesCustom-0001",
+          "label": "Curves",
+          "header_flags": [
+            0,
+            2,
+            17367385
+          ],
+          "kind": 11,
+          "reserved": [
+            0,
+            0
+          ],
+          "payload_words": [
+            33554432,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Effect Built In Params",
+          "label": "",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 9,
+          "reserved": [
+            0,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [],
+          "point_relative": false
+        }
+      ]
+    },
+    {
+      "match_name": "ADBE Color Balance 2",
+      "name": "Color Balance",
+      "parameters": [
+        {
+          "match_name": "ADBE Color Balance 2-0000",
+          "label": "",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 0,
+          "reserved": [
+            2,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            4294967295,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Color Balance 2-0001",
+          "label": "Shadow Red Balance",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 2,
+          "reserved": [
+            0,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            4288413696,
+            6553600,
+            4288413696,
+            6553600,
+            0,
+            65536
+          ],
+          "popup": null,
+          "defaults": [
+            0
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Color Balance 2-0002",
+          "label": "Shadow Green Balance",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 2,
+          "reserved": [
+            0,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            4288413696,
+            6553600,
+            4288413696,
+            6553600,
+            0,
+            65536
+          ],
+          "popup": null,
+          "defaults": [
+            0
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Color Balance 2-0003",
+          "label": "Shadow Blue Balance",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 2,
+          "reserved": [
+            0,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            4288413696,
+            6553600,
+            4288413696,
+            6553600,
+            0,
+            65536
+          ],
+          "popup": null,
+          "defaults": [
+            0
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Color Balance 2-0004",
+          "label": "Midtone Red Balance",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 2,
+          "reserved": [
+            0,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            4288413696,
+            6553600,
+            4288413696,
+            6553600,
+            0,
+            65536
+          ],
+          "popup": null,
+          "defaults": [
+            0
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Color Balance 2-0005",
+          "label": "Midtone Green Balance",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 2,
+          "reserved": [
+            0,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            4288413696,
+            6553600,
+            4288413696,
+            6553600,
+            0,
+            65536
+          ],
+          "popup": null,
+          "defaults": [
+            0
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Color Balance 2-0006",
+          "label": "Midtone Blue Balance",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 2,
+          "reserved": [
+            0,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            4288413696,
+            6553600,
+            4288413696,
+            6553600,
+            0,
+            65536
+          ],
+          "popup": null,
+          "defaults": [
+            0
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Color Balance 2-0007",
+          "label": "Highlight Red Balance",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 2,
+          "reserved": [
+            0,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            4288413696,
+            6553600,
+            4288413696,
+            6553600,
+            0,
+            65536
+          ],
+          "popup": null,
+          "defaults": [
+            0
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Color Balance 2-0008",
+          "label": "Highlight Green Balance",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 2,
+          "reserved": [
+            0,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            4288413696,
+            6553600,
+            4288413696,
+            6553600,
+            0,
+            65536
+          ],
+          "popup": null,
+          "defaults": [
+            0
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Color Balance 2-0009",
+          "label": "Highlight Blue Balance",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 2,
+          "reserved": [
+            0,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            4288413696,
+            6553600,
+            4288413696,
+            6553600,
+            0,
+            65536
+          ],
+          "popup": null,
+          "defaults": [
+            0
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Color Balance 2-0010",
+          "label": "",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 4,
+          "reserved": [
+            0,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": "Preserve Luminosity",
+          "defaults": [
+            0
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Effect Built In Params",
+          "label": "",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 9,
+          "reserved": [
+            0,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [],
+          "point_relative": false
+        }
+      ]
+    },
+    {
+      "match_name": "ADBE CHANNEL MIXER",
+      "name": "Channel Mixer",
+      "parameters": [
+        {
+          "match_name": "ADBE CHANNEL MIXER-0000",
+          "label": "",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 0,
+          "reserved": [
+            2,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            4294967295,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE CHANNEL MIXER-0001",
+          "label": "Red-Red",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 2,
+          "reserved": [
+            0,
+            0
+          ],
+          "payload_words": [
+            6553600,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            4281860096,
+            13107200,
+            4281860096,
+            13107200,
+            6553600,
+            0
+          ],
+          "popup": null,
+          "defaults": [
+            100
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE CHANNEL MIXER-0002",
+          "label": "Red-Green",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 2,
+          "reserved": [
+            0,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            4281860096,
+            13107200,
+            4281860096,
+            13107200,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [
+            0
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE CHANNEL MIXER-0003",
+          "label": "Red-Blue",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 2,
+          "reserved": [
+            0,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            4281860096,
+            13107200,
+            4281860096,
+            13107200,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [
+            0
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE CHANNEL MIXER-0004",
+          "label": "Red-Const",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 2,
+          "reserved": [
+            0,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            4281860096,
+            13107200,
+            4281860096,
+            13107200,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [
+            0
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE CHANNEL MIXER-0005",
+          "label": "Green-Red",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 2,
+          "reserved": [
+            0,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            4281860096,
+            13107200,
+            4281860096,
+            13107200,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [
+            0
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE CHANNEL MIXER-0006",
+          "label": "Green-Green",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 2,
+          "reserved": [
+            0,
+            0
+          ],
+          "payload_words": [
+            6553600,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            4281860096,
+            13107200,
+            4281860096,
+            13107200,
+            6553600,
+            0
+          ],
+          "popup": null,
+          "defaults": [
+            100
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE CHANNEL MIXER-0007",
+          "label": "Green-Blue",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 2,
+          "reserved": [
+            0,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            4281860096,
+            13107200,
+            4281860096,
+            13107200,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [
+            0
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE CHANNEL MIXER-0008",
+          "label": "Green-Const",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 2,
+          "reserved": [
+            0,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            4281860096,
+            13107200,
+            4281860096,
+            13107200,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [
+            0
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE CHANNEL MIXER-0009",
+          "label": "Blue-Red",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 2,
+          "reserved": [
+            0,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            4281860096,
+            13107200,
+            4281860096,
+            13107200,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [
+            0
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE CHANNEL MIXER-0010",
+          "label": "Blue-Green",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 2,
+          "reserved": [
+            0,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            4281860096,
+            13107200,
+            4281860096,
+            13107200,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [
+            0
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE CHANNEL MIXER-0011",
+          "label": "Blue-Blue",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 2,
+          "reserved": [
+            0,
+            0
+          ],
+          "payload_words": [
+            6553600,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            4281860096,
+            13107200,
+            4281860096,
+            13107200,
+            6553600,
+            0
+          ],
+          "popup": null,
+          "defaults": [
+            100
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE CHANNEL MIXER-0012",
+          "label": "Blue-Const",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 2,
+          "reserved": [
+            0,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            4281860096,
+            13107200,
+            4281860096,
+            13107200,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [
+            0
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE CHANNEL MIXER-0013",
+          "label": "Monochrome",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 4,
+          "reserved": [
+            0,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": "",
+          "defaults": [
+            0
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE Effect Built In Params",
+          "label": "",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 9,
+          "reserved": [
+            0,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [],
+          "point_relative": false
+        }
+      ]
+    },
+    {
+      "match_name": "ADBE SelectiveColor",
+      "name": "Selective Color",
+      "parameters": [
+        {
+          "match_name": "ADBE SelectiveColor-0000",
+          "label": "",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 0,
+          "reserved": [
+            2,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            4294967295,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE SelectiveColor-0001",
+          "label": "Method:",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 7,
+          "reserved": [
+            0,
+            0
+          ],
+          "payload_words": [
+            1,
+            131073,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": "Relative|Absolute",
+          "defaults": [
+            1
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE SelectiveColor-0002",
+          "label": "Colors:",
+          "header_flags": [
+            0,
+            4,
+            0
+          ],
+          "kind": 7,
+          "reserved": [
+            66,
+            0
+          ],
+          "payload_words": [
+            1,
+            589825,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": "Reds|Yellows|Greens|Cyans|Blues|Magentas|Whites|Neutrals|Blacks",
+          "defaults": [
+            1
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE SelectiveColor-0003",
+          "label": "Cyan",
+          "header_flags": [
+            0,
+            4,
+            0
+          ],
+          "kind": 10,
+          "reserved": [
+            98,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            3267887104,
+            1120403456,
+            3267887104,
+            1120403456,
+            0,
+            65537,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [
+            0
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE SelectiveColor-0004",
+          "label": "Magenta",
+          "header_flags": [
+            0,
+            4,
+            0
+          ],
+          "kind": 10,
+          "reserved": [
+            98,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            3267887104,
+            1120403456,
+            3267887104,
+            1120403456,
+            0,
+            65537,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [
+            0
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE SelectiveColor-0005",
+          "label": "Yellow",
+          "header_flags": [
+            0,
+            4,
+            0
+          ],
+          "kind": 10,
+          "reserved": [
+            98,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            3267887104,
+            1120403456,
+            3267887104,
+            1120403456,
+            0,
+            65537,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [
+            0
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE SelectiveColor-0006",
+          "label": "Black",
+          "header_flags": [
+            0,
+            4,
+            0
+          ],
+          "kind": 10,
+          "reserved": [
+            98,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            3267887104,
+            1120403456,
+            3267887104,
+            1120403456,
+            0,
+            65537,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [
+            0
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE SelectiveColor-0007",
+          "label": "Details",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 13,
+          "reserved": [
+            2,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE SelectiveColor-0008",
+          "label": "Reds",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 13,
+          "reserved": [
+            2,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE SelectiveColor-0009",
+          "label": "Cyan",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 10,
+          "reserved": [
+            0,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            3267887104,
+            1120403456,
+            3267887104,
+            1120403456,
+            0,
+            65537,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [
+            0
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE SelectiveColor-0010",
+          "label": "Magenta",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 10,
+          "reserved": [
+            0,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            3267887104,
+            1120403456,
+            3267887104,
+            1120403456,
+            0,
+            65537,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [
+            0
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE SelectiveColor-0011",
+          "label": "Yellow",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 10,
+          "reserved": [
+            0,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            3267887104,
+            1120403456,
+            3267887104,
+            1120403456,
+            0,
+            65537,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [
+            0
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE SelectiveColor-0012",
+          "label": "Black",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 10,
+          "reserved": [
+            0,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            3267887104,
+            1120403456,
+            3267887104,
+            1120403456,
+            0,
+            65537,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [
+            0
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE SelectiveColor-0013",
+          "label": "",
+          "header_flags": [
+            0,
+            8,
+            0
+          ],
+          "kind": 14,
+          "reserved": [
+            2,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE SelectiveColor-0014",
+          "label": "Yellows",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 13,
+          "reserved": [
+            2,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE SelectiveColor-0015",
+          "label": "Cyan",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 10,
+          "reserved": [
+            0,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            3267887104,
+            1120403456,
+            3267887104,
+            1120403456,
+            0,
+            65537,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [
+            0
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE SelectiveColor-0016",
+          "label": "Magenta",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 10,
+          "reserved": [
+            0,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            3267887104,
+            1120403456,
+            3267887104,
+            1120403456,
+            0,
+            65537,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [
+            0
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE SelectiveColor-0017",
+          "label": "Yellow",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 10,
+          "reserved": [
+            0,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            3267887104,
+            1120403456,
+            3267887104,
+            1120403456,
+            0,
+            65537,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [
+            0
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE SelectiveColor-0018",
+          "label": "Black",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 10,
+          "reserved": [
+            0,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            3267887104,
+            1120403456,
+            3267887104,
+            1120403456,
+            0,
+            65537,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [
+            0
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE SelectiveColor-0019",
+          "label": "",
+          "header_flags": [
+            0,
+            8,
+            0
+          ],
+          "kind": 14,
+          "reserved": [
+            2,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE SelectiveColor-0020",
+          "label": "Greens",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 13,
+          "reserved": [
+            2,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE SelectiveColor-0021",
+          "label": "Cyan",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 10,
+          "reserved": [
+            0,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            3267887104,
+            1120403456,
+            3267887104,
+            1120403456,
+            0,
+            65537,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [
+            0
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE SelectiveColor-0022",
+          "label": "Magenta",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 10,
+          "reserved": [
+            0,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            3267887104,
+            1120403456,
+            3267887104,
+            1120403456,
+            0,
+            65537,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [
+            0
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE SelectiveColor-0023",
+          "label": "Yellow",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 10,
+          "reserved": [
+            0,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            3267887104,
+            1120403456,
+            3267887104,
+            1120403456,
+            0,
+            65537,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [
+            0
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE SelectiveColor-0024",
+          "label": "Black",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 10,
+          "reserved": [
+            0,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            3267887104,
+            1120403456,
+            3267887104,
+            1120403456,
+            0,
+            65537,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [
+            0
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE SelectiveColor-0025",
+          "label": "",
+          "header_flags": [
+            0,
+            8,
+            0
+          ],
+          "kind": 14,
+          "reserved": [
+            2,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE SelectiveColor-0026",
+          "label": "Cyans",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 13,
+          "reserved": [
+            2,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE SelectiveColor-0027",
+          "label": "Cyan",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 10,
+          "reserved": [
+            0,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            3267887104,
+            1120403456,
+            3267887104,
+            1120403456,
+            0,
+            65537,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [
+            0
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE SelectiveColor-0028",
+          "label": "Magenta",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 10,
+          "reserved": [
+            0,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            3267887104,
+            1120403456,
+            3267887104,
+            1120403456,
+            0,
+            65537,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [
+            0
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE SelectiveColor-0029",
+          "label": "Yellow",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 10,
+          "reserved": [
+            0,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            3267887104,
+            1120403456,
+            3267887104,
+            1120403456,
+            0,
+            65537,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [
+            0
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE SelectiveColor-0030",
+          "label": "Black",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 10,
+          "reserved": [
+            0,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            3267887104,
+            1120403456,
+            3267887104,
+            1120403456,
+            0,
+            65537,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [
+            0
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE SelectiveColor-0031",
+          "label": "",
+          "header_flags": [
+            0,
+            8,
+            0
+          ],
+          "kind": 14,
+          "reserved": [
+            2,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE SelectiveColor-0032",
+          "label": "Blues",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 13,
+          "reserved": [
+            2,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE SelectiveColor-0033",
+          "label": "Cyan",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 10,
+          "reserved": [
+            0,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            3267887104,
+            1120403456,
+            3267887104,
+            1120403456,
+            0,
+            65537,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [
+            0
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE SelectiveColor-0034",
+          "label": "Magenta",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 10,
+          "reserved": [
+            0,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            3267887104,
+            1120403456,
+            3267887104,
+            1120403456,
+            0,
+            65537,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [
+            0
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE SelectiveColor-0035",
+          "label": "Yellow",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 10,
+          "reserved": [
+            0,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            3267887104,
+            1120403456,
+            3267887104,
+            1120403456,
+            0,
+            65537,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [
+            0
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE SelectiveColor-0036",
+          "label": "Black",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 10,
+          "reserved": [
+            0,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            3267887104,
+            1120403456,
+            3267887104,
+            1120403456,
+            0,
+            65537,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [
+            0
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE SelectiveColor-0037",
+          "label": "",
+          "header_flags": [
+            0,
+            8,
+            0
+          ],
+          "kind": 14,
+          "reserved": [
+            2,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE SelectiveColor-0038",
+          "label": "Magentas",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 13,
+          "reserved": [
+            2,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE SelectiveColor-0039",
+          "label": "Cyan",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 10,
+          "reserved": [
+            0,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            3267887104,
+            1120403456,
+            3267887104,
+            1120403456,
+            0,
+            65537,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [
+            0
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE SelectiveColor-0040",
+          "label": "Magenta",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 10,
+          "reserved": [
+            0,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            3267887104,
+            1120403456,
+            3267887104,
+            1120403456,
+            0,
+            65537,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [
+            0
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE SelectiveColor-0041",
+          "label": "Yellow",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 10,
+          "reserved": [
+            0,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            3267887104,
+            1120403456,
+            3267887104,
+            1120403456,
+            0,
+            65537,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [
+            0
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE SelectiveColor-0042",
+          "label": "Black",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 10,
+          "reserved": [
+            0,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            3267887104,
+            1120403456,
+            3267887104,
+            1120403456,
+            0,
+            65537,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [
+            0
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE SelectiveColor-0043",
+          "label": "",
+          "header_flags": [
+            0,
+            8,
+            0
+          ],
+          "kind": 14,
+          "reserved": [
+            2,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE SelectiveColor-0044",
+          "label": "Whites",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 13,
+          "reserved": [
+            2,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE SelectiveColor-0045",
+          "label": "Cyan",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 10,
+          "reserved": [
+            0,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            3267887104,
+            1120403456,
+            3267887104,
+            1120403456,
+            0,
+            65537,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [
+            0
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE SelectiveColor-0046",
+          "label": "Magenta",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 10,
+          "reserved": [
+            0,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            3267887104,
+            1120403456,
+            3267887104,
+            1120403456,
+            0,
+            65537,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [
+            0
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE SelectiveColor-0047",
+          "label": "Yellow",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 10,
+          "reserved": [
+            0,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            3267887104,
+            1120403456,
+            3267887104,
+            1120403456,
+            0,
+            65537,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [
+            0
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE SelectiveColor-0048",
+          "label": "Black",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 10,
+          "reserved": [
+            0,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            3267887104,
+            1120403456,
+            3267887104,
+            1120403456,
+            0,
+            65537,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [
+            0
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE SelectiveColor-0049",
+          "label": "",
+          "header_flags": [
+            0,
+            8,
+            0
+          ],
+          "kind": 14,
+          "reserved": [
+            2,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE SelectiveColor-0050",
+          "label": "Neutrals",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 13,
+          "reserved": [
+            2,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE SelectiveColor-0051",
+          "label": "Cyan",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 10,
+          "reserved": [
+            0,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            3267887104,
+            1120403456,
+            3267887104,
+            1120403456,
+            0,
+            65537,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [
+            0
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE SelectiveColor-0052",
+          "label": "Magenta",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 10,
+          "reserved": [
+            0,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            3267887104,
+            1120403456,
+            3267887104,
+            1120403456,
+            0,
+            65537,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [
+            0
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE SelectiveColor-0053",
+          "label": "Yellow",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 10,
+          "reserved": [
+            0,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            3267887104,
+            1120403456,
+            3267887104,
+            1120403456,
+            0,
+            65537,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [
+            0
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE SelectiveColor-0054",
+          "label": "Black",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 10,
+          "reserved": [
+            0,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            3267887104,
+            1120403456,
+            3267887104,
+            1120403456,
+            0,
+            65537,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [
+            0
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE SelectiveColor-0055",
+          "label": "",
+          "header_flags": [
+            0,
+            8,
+            0
+          ],
+          "kind": 14,
+          "reserved": [
+            2,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE SelectiveColor-0056",
+          "label": "Blacks",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 13,
+          "reserved": [
+            2,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE SelectiveColor-0057",
+          "label": "Cyan",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 10,
+          "reserved": [
+            0,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            3267887104,
+            1120403456,
+            3267887104,
+            1120403456,
+            0,
+            65537,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [
+            0
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE SelectiveColor-0058",
+          "label": "Magenta",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 10,
+          "reserved": [
+            0,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            3267887104,
+            1120403456,
+            3267887104,
+            1120403456,
+            0,
+            65537,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [
+            0
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE SelectiveColor-0059",
+          "label": "Yellow",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 10,
+          "reserved": [
+            0,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            3267887104,
+            1120403456,
+            3267887104,
+            1120403456,
+            0,
+            65537,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [
+            0
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE SelectiveColor-0060",
+          "label": "Black",
+          "header_flags": [
+            0,
+            0,
+            0
+          ],
+          "kind": 10,
+          "reserved": [
+            0,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            3267887104,
+            1120403456,
+            3267887104,
+            1120403456,
+            0,
+            65537,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [
+            0
+          ],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE SelectiveColor-0061",
+          "label": "",
+          "header_flags": [
+            0,
+            8,
+            0
+          ],
+          "kind": 14,
+          "reserved": [
+            2,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [],
+          "point_relative": false
+        },
+        {
+          "match_name": "ADBE SelectiveColor-0062",
+          "label": "",
+          "header_flags": [
+            0,
+            8,
+            0
+          ],
+          "kind": 14,
+          "reserved": [
+            2,
+            0
+          ],
+          "payload_words": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "popup": null,
+          "defaults": [],
           "point_relative": false
         },
         {

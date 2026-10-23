@@ -11,6 +11,7 @@ fn with_lowerer(document: &EditableFxCompositionDocument, check: impl FnOnce(&mu
     let preflight = source_variants::preflight_layers(document, roots, &precompositions).unwrap();
     let mut lowerer = Lowerer {
         hdr: None,
+        aces: false,
         rate,
         duration,
         end: Time::ZERO.saturating_add(document.duration()),

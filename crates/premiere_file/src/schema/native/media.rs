@@ -45,6 +45,35 @@ pub(crate) struct VideoStream {
     pub(crate) is_continuous_time: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) original_color_space: Option<String>,
+    /// Interpret Footage colour state; Version 19 saves all four (`{}` and a
+    /// nil GUID when unset), Version 21 only `InputLUTSpecified`. Premiere
+    /// 26.5.2 (Version 23) saves an active Color Space Override as
+    /// `OverriddenColorSpace` plus `IsColorSpacOverridden` `true`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) selected_color_space: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) overridden_color_space: Option<String>,
+    /// Native spelling.
+    #[serde(
+        rename = "IsColorSpacOverridden",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub(crate) is_color_space_overridden: Option<String>,
+    #[serde(rename = "InputLUTSpecified", skip_serializing_if = "Option::is_none")]
+    pub(crate) input_lut_specified: Option<String>,
+    #[serde(rename = "InputLUTID", skip_serializing_if = "Option::is_none")]
+    pub(crate) input_lut_id: Option<String>,
+    /// Premiere 26.5.2 (Version 23) saves a browsed Input LUT as this edge to
+    /// a [`LutAsset`] plus its two names; see `schema::PrClipInputLut`.
+    #[serde(rename = "InputLUTAsset", skip_serializing_if = "Option::is_none")]
+    pub(crate) input_lut_asset: Option<Reference>,
+    #[serde(
+        rename = "InputLUTDisplayName",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub(crate) input_lut_display_name: Option<String>,
+    #[serde(rename = "InputLUTFileName", skip_serializing_if = "Option::is_none")]
+    pub(crate) input_lut_file_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) alpha_type: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -55,6 +84,38 @@ pub(crate) struct VideoStream {
     pub(crate) original_field_type: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) original_image_orientation_type: Option<String>,
+}
+
+/// A LUT registered with Premiere (`LUTAsset`, Version 1): its registry GUID,
+/// names and embedded samples (`cube_lut::Lut3d::from_itx3`).
+#[derive(Debug, Deserialize, Serialize)]
+pub(crate) struct LutAsset {
+    #[serde(rename = "@ObjectID")]
+    pub(crate) object_id: ObjectId<LutAsset>,
+    #[serde(rename = "@ClassID", skip_serializing_if = "Option::is_none")]
+    pub(crate) class_id: Option<String>,
+    #[serde(rename = "@Version", skip_serializing_if = "Option::is_none")]
+    pub(crate) version: Option<String>,
+    #[serde(rename = "Id", skip_serializing_if = "Option::is_none")]
+    pub(crate) id: Option<String>,
+    #[serde(rename = "Displayname", skip_serializing_if = "Option::is_none")]
+    pub(crate) display_name: Option<String>,
+    #[serde(rename = "Filename", skip_serializing_if = "Option::is_none")]
+    pub(crate) file_name: Option<String>,
+    #[serde(rename = "Blob", skip_serializing_if = "Option::is_none")]
+    pub(crate) blob: Option<LutBlob>,
+}
+
+/// The base64 samples of a [`LutAsset`]; empty when an earlier element
+/// stores the same `BinaryHash`.
+#[derive(Debug, Deserialize, Serialize)]
+pub(crate) struct LutBlob {
+    #[serde(rename = "@Encoding")]
+    pub(crate) encoding: String,
+    #[serde(rename = "@BinaryHash")]
+    pub(crate) binary_hash: String,
+    #[serde(rename = "$text", default)]
+    pub(crate) value: String,
 }
 
 #[derive(Debug, Deserialize, Serialize)]

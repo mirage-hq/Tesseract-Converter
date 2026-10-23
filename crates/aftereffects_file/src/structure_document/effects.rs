@@ -25,6 +25,11 @@ use crate::{
 #[path = "effects/color_balance_identity.rs"]
 mod color_balance_identity;
 
+#[path = "effects/apply_color_lut.rs"]
+mod apply_color_lut;
+#[path = "effects/color_grade.rs"]
+mod color_grade;
+
 #[cfg(test)]
 #[path = "effects/toner_tests.rs"]
 mod toner_tests;
@@ -37,6 +42,7 @@ mod curves_tests;
 #[path = "effects/fractal_key_tests.rs"]
 mod fractal_key_tests;
 
+pub(super) mod effect_masks;
 mod frame_fade;
 mod light_sweep;
 
@@ -49,6 +55,8 @@ pub(super) struct ImportContext<'a> {
     pub composition: Option<&'a Composition>,
     pub items: Option<&'a HashMap<u32, &'a ProjectItem>>,
     pub effect_definitions: &'a [crate::rifx::Chunk],
+    /// Selects the Lumetri Exposure scale (OCIO ACES vs legacy projects).
+    pub grade_domain: crate::effects::color_grades::ColorGradeDomain,
 }
 
 pub(super) struct ImportedEffects {
@@ -69,6 +77,8 @@ pub(super) struct ImportedEffects {
     /// or the warning why a present preset is not lowered. The caller resolves
     /// it after the Shape importer, which can commit the same preset itself.
     pub frame_fade: Result<Option<FrameFade>, String>,
+    /// Effect mask references awaiting the owner's imported masks.
+    pub pending_effect_masks: Vec<effect_masks::PendingEffectMasks>,
 }
 
 /// Roto Brush & Refine Edge: AE segments the owner's foreground into alpha.
@@ -563,6 +573,7 @@ pub(super) fn import(
             composition: None,
             items: None,
             effect_definitions: &[],
+            grade_domain: crate::effects::color_grades::ColorGradeDomain::Legacy,
         },
         layer,
         native_size,
@@ -607,6 +618,7 @@ pub(super) fn import_with_context(
         unsupported_cutout: false,
         unsupported_sweep_cutout: false,
         frame_fade,
+        pending_effect_masks: Vec::new(),
     };
     match basic_text {
         Ok(generator) => result.basic_text = generator,
@@ -624,6 +636,15 @@ pub(super) fn import_with_context(
             }
         }
     }
+    let compositing: HashMap<_, _> = native_effects
+        .iter()
+        .map(|source| {
+            (
+                source.index,
+                (source.match_name.clone(), source.compositing.clone()),
+            )
+        })
+        .collect();
     let opaque_fractal =
         crate::effects::fractal_noise::opaque_ordinals(layer, &native_effects, context.items);
     let fractal_canvas = crate::effects::fractal_noise::blend_canvas(layer, context.items);
@@ -1127,8 +1148,9 @@ pub(super) fn import_with_context(
         }
         if source.match_name == crate::effects::curves::MATCH_NAME {
             let candidate = (|| -> Result<_, String> {
-                let effect = crate::effects::curves::lower(&layer.content, source.index)
-                    .map_err(|error| error.to_string())?;
+                let (effect, warnings) =
+                    crate::effects::curves::lower(&layer.content, source.index)
+                        .map_err(|error| error.to_string())?;
                 let mut candidate_id = *next_id;
                 let raw_id = super::reserve_ids(&mut candidate_id, 1)
                     .ok_or("generated effect identifier space exhausted")?;
@@ -1140,14 +1162,14 @@ pub(super) fn import_with_context(
                     extensions: Default::default(),
                 })
                 .map_err(|error| error.to_string())?;
-                Ok((candidate_id, record))
+                Ok((candidate_id, record, warnings))
             })();
             match candidate {
-                Ok((candidate_id, record)) => {
+                Ok((candidate_id, record, warnings)) => {
                     *next_id = candidate_id;
                     result.effects.push(record);
                     result.native_ordinals.push(source.index);
-                    result.warnings.push("Effect ADBE CurvesCustom: static 8-bit tables approximated by editable piecewise-linear ColorCurves within one code value at every table sample; native spline, HDR and alpha fidelity unverified".into());
+                    result.warnings.extend(warnings);
                 }
                 Err(reason) => result.warnings.push(format!(
                     "Effect ADBE CurvesCustom: {reason}; effect omitted, owner and other effects retained"
@@ -1157,6 +1179,21 @@ pub(super) fn import_with_context(
         }
         if source.match_name == keylight::MATCH_NAME {
             import_keylight(&source, layer, next_id, &mut result);
+            continue;
+        }
+        if source.match_name == crate::effects::apply_color_lut::MATCH_NAME {
+            apply_color_lut::import(&source, layer, next_id, &mut result);
+            continue;
+        }
+        if crate::effects::color_grades::handles(&source.match_name) {
+            color_grade::import(
+                &source,
+                context.grade_domain,
+                layer,
+                next_id,
+                budget,
+                &mut result,
+            );
             continue;
         }
         if let Err(reason) = special::validate_import(&source) {
@@ -1557,6 +1594,7 @@ pub(super) fn import_with_context(
                 .push(format!("Effect {}: {}", source.match_name, mapping.note));
         }
     }
+    color_grade::apply_compositing(&mut result, &compositing);
     result
 }
 
@@ -1638,6 +1676,7 @@ fn toner_original_gate(layer: &Layer, identities: &HashSet<usize>) -> Result<(),
 
 #[cfg(test)]
 mod tests {
+    mod color_grades;
     mod fast_blur;
     mod roughen;
     mod tiler;
@@ -2682,6 +2721,7 @@ mod tests {
                     composition: Some(comp),
                     items: Some(&items),
                     effect_definitions: &[],
+                    grade_domain: crate::effects::color_grades::ColorGradeDomain::Legacy,
                 },
                 &layer,
                 [1920, 1080],
@@ -2743,6 +2783,7 @@ mod tests {
                         composition: Some(comp),
                         items: None,
                         effect_definitions: &[],
+                        grade_domain: crate::effects::color_grades::ColorGradeDomain::Legacy,
                     },
                     &layer,
                     [1920, 1080],
@@ -3332,6 +3373,60 @@ mod tests {
                 .iter()
                 .any(|warning| warning.contains("duplicate effect control record"))
         );
+    }
+
+    #[test]
+    fn gaussian_blur_dimensions_are_read_and_only_a_single_axis_is_diagnosed() {
+        for (dimensions, expected) in [
+            (1.0, None),
+            (
+                2.0,
+                Some("-0002 Blur Dimensions Horizontal (2) is not Horizontal and Vertical"),
+            ),
+            (
+                3.0,
+                Some("-0002 Blur Dimensions Vertical (3) is not Horizontal and Vertical"),
+            ),
+        ] {
+            let owner = catalog_owner(&[native_effect(
+                "ADBE Gaussian Blur 2",
+                &[("-0002", dimensions)],
+            )]);
+            let imported = import(
+                &ExpressionSamples::default(),
+                RIPPLE_COMPOSITION,
+                &owner,
+                PLANE,
+                PLANE,
+                &mut 100,
+                &mut Default::default(),
+            );
+            assert_eq!(imported.effects.len(), 1, "{:?}", imported.warnings);
+            assert!(
+                !imported
+                    .warnings
+                    .iter()
+                    .any(|warning| warning.contains("Gaussian Blur 2-0002")),
+                "{:?}",
+                imported.warnings
+            );
+            let diagnosed = imported
+                .warnings
+                .iter()
+                .filter(|warning| warning.contains("Blur Dimensions") && warning.contains("-0002"))
+                .count();
+            match expected {
+                None => assert_eq!(diagnosed, 0, "{:?}", imported.warnings),
+                Some(text) => assert!(
+                    imported
+                        .warnings
+                        .iter()
+                        .any(|warning| warning.contains(text)),
+                    "{:?}",
+                    imported.warnings
+                ),
+            }
+        }
     }
 
     #[test]

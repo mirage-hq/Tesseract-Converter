@@ -50,6 +50,7 @@ fn native_and_fresh() -> (Vec<Chunk>, Chunk) {
         feather_track: None,
         opacity_track: None,
         expansion_track: None,
+        source_mask: None,
     };
     (native, mask_properties(&mask).unwrap())
 }

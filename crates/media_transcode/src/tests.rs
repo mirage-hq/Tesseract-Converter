@@ -695,6 +695,66 @@ fn hdr_preparation_copies_pinned_hlg_source_bytes_and_metadata() {
     assert!(!ae_output.exists());
 }
 
+#[cfg(feature = "ffmpeg-library")]
+#[test]
+fn hdr_preparation_copies_the_pinned_pq_and_hlg_hevc_clips_unchanged() {
+    // In-house 1080p30 HEVC Main 10 clips of the colour chart
+    // (`color_fixtures.provenance.json`); the PQ clip carries ST 2086
+    // mastering and CTA-861.3 light-level metadata, which the copy keeps.
+    for (name, bytes, transfer) in [
+        (
+            "color_hdr_pq_clip.mp4",
+            include_bytes!("../../premiere_file/tests/fixtures/color_hdr_pq_clip.mp4").as_slice(),
+            "smpte2084",
+        ),
+        (
+            "color_hdr_hlg_clip.mp4",
+            include_bytes!("../../premiere_file/tests/fixtures/color_hdr_hlg_clip.mp4").as_slice(),
+            "arib-std-b67",
+        ),
+    ] {
+        let directory = tempfile::tempdir().unwrap();
+        let input = directory.path().join(name);
+        let output = directory.path().join("prepared.mp4");
+        fs::write(&input, bytes).unwrap();
+        let cancelled = AtomicBool::new(false);
+        let result = run(
+            TranscodeRequest {
+                input: &input,
+                output: &output,
+                backend: Backend::Library,
+                cancelled: &cancelled,
+            },
+            &mut |_| {},
+        )
+        .unwrap();
+        assert_eq!(result.operation, Operation::Copy, "{name}");
+        assert_eq!(result.input_sha256, result.output_sha256, "{name}");
+        assert_eq!(fs::read(&output).unwrap().as_slice(), bytes, "{name}");
+        let video = result.media.video.as_ref().unwrap();
+        assert_eq!(video.codec, "hevc", "{name}");
+        assert_eq!(video.pixel_format, "yuv420p10le", "{name}");
+        assert_eq!(
+            video.color,
+            model::ColorInfo {
+                primaries: "bt2020".into(),
+                transfer: transfer.into(),
+                space: "bt2020nc".into(),
+                range: "tv".into(),
+            },
+            "{name}"
+        );
+        assert!(
+            result
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("copied unchanged")),
+            "{name}: {:?}",
+            result.warnings
+        );
+    }
+}
+
 #[test]
 fn planning_uses_copy_only_for_matching_proven_container() {
     let directory = tempfile::tempdir().unwrap();

@@ -154,6 +154,8 @@ pub struct LinkedMedia {
     /// chose relocated or collected footage; each must stay missing.
     relocated: BTreeSet<PathBuf>,
     normalized: Vec<tempfile::NamedTempFile>,
+    /// Embedded Apply Color LUTs of the pictures, packaged as `.cube` assets.
+    luts: Vec<super::apply_color_lut::ImportedLuts>,
 }
 
 impl LinkedMedia {
@@ -165,6 +167,10 @@ impl LinkedMedia {
     ) -> Result<TesseractFileBuilder, TesseractFileError> {
         for (id, (_, path, kind)) in &self.assets {
             builder = builder.add_asset(id.as_str(), path, *kind)?;
+        }
+        let mut luts = BTreeSet::new();
+        for picture in &self.luts {
+            builder = picture.add_to(builder, &mut luts)?;
         }
         Ok(builder)
     }
@@ -346,6 +352,7 @@ pub struct ImportedAfterEffectsComposition {
     pub assets: Vec<(fx_schema::AssetId, PathBuf, tesseract_file::AssetKind)>,
     pub diagnostics: Vec<ImportDiagnostic>,
     _normalized: Vec<tempfile::NamedTempFile>,
+    _luts: super::apply_color_lut::ImportedLuts,
 }
 
 impl ImportedAfterEffectsComposition {
@@ -393,6 +400,14 @@ impl ResolvedAfterEffectsComposition<'_> {
                 asset.kind,
             ));
         }
+        let luts = super::apply_color_lut::ImportedLuts::prepare(
+            &self.source.project,
+            converted.document.composition(),
+        )?;
+        assets.extend(
+            luts.assets()
+                .map(|(id, path, kind)| (id.clone(), path.clone(), kind)),
+        );
         let mut diagnostics = converted.diagnostics;
         diagnostics.append(&mut preflight.diagnostics);
         let normalized = preflight
@@ -407,6 +422,7 @@ impl ResolvedAfterEffectsComposition<'_> {
             assets,
             diagnostics,
             _normalized: normalized,
+            _luts: luts,
         })
     }
 
@@ -542,6 +558,12 @@ impl ResolvedAfterEffectsComposition<'_> {
         let mut diagnostics = converted.diagnostics;
         diagnostics.append(&mut media.record(preflight, &converted.assets)?);
         let composition = converted.document.composition();
+        media
+            .luts
+            .push(super::apply_color_lut::ImportedLuts::prepare(
+                &self.source.project,
+                composition,
+            )?);
         let [root] = composition.layers() else {
             panic!("a converted composition has exactly one root Group");
         };
@@ -578,6 +600,12 @@ impl ResolvedAfterEffectsComposition<'_> {
         let mut diagnostics = converted.diagnostics;
         diagnostics.append(&mut media.record(preflight, &converted.assets)?);
         let composition = converted.document.composition();
+        media
+            .luts
+            .push(super::apply_color_lut::ImportedLuts::prepare(
+                &self.source.project,
+                composition,
+            )?);
         let [root] = composition.layers() else {
             panic!("a converted composition has exactly one root Group");
         };

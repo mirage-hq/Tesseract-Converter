@@ -91,22 +91,15 @@ fn native_proxy_content_packages_original_with_saved_timing() {
     write_prproj(&input, &xml);
     let output = root.join("positive");
     let omissions = premiere_to_tesseract(&input, &output, Some(SEQUENCE), false).unwrap();
-    // Existing sequence color-management losses are not proxy substitution.
+    // Proxy substitution reports nothing, and the sequence's Premiere 26.5.x
+    // default colour settings (graphics white 203, tone-map desaturation 0.5)
+    // are not reported as losses.
     assert_eq!(
         omissions
             .iter()
             .map(|item| (item.record.as_str(), item.reason.as_str()))
             .collect::<Vec<_>>(),
-        [
-            (
-                "VideoTrackGroup:59",
-                "ToneMappingDesaturation not converted"
-            ),
-            (
-                "VideoTrackGroup:59",
-                "nondefault ColorManagementSettings not converted"
-            ),
-        ]
+        Vec::<(&str, &str)>::new()
     );
     let file = TesseractFile::open(first_project(&output)).unwrap();
     let document = file.project_json().unwrap();

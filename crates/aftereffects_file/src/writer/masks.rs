@@ -54,6 +54,10 @@ pub(crate) struct NativeMaskSpec {
     pub feather_track: Option<NumericTrack>,
     pub opacity_track: Option<NumericTrack>,
     pub expansion_track: Option<NumericTrack>,
+    /// The FX mask this native mask alone represents, so effect Compositing
+    /// Options can reference it; `None` for generated masks (crops, Text Path
+    /// guides) and for FX masks split into several native masks.
+    pub source_mask: Option<fx_schema::FxItemId>,
 }
 
 impl NativeMaskSpec {
@@ -92,6 +96,7 @@ impl NativeMaskSpec {
             feather_track: None,
             opacity_track: None,
             expansion_track: None,
+            source_mask: None,
         })
     }
 }
@@ -185,10 +190,10 @@ fn parade_with_clock(
     ];
     for (offset, mask) in masks.iter().enumerate() {
         validate(mask)?;
-        let index = u16::try_from(offset + 1)
-            .map_err(|_| AepWriteError::Invalid("native mask index exceeds u16"))?;
+        let identity = native_identity(offset)
+            .ok_or(AepWriteError::Invalid("native mask index exceeds u16"))?;
         children.push(match_name("ADBE Mask Atom")?);
-        children.push(Chunk::data(*b"mkif", mask_info(mask, index))?);
+        children.push(Chunk::data(*b"mkif", mask_info(mask, identity))?);
         children.push(mask_properties_with_clock(mask, clock)?);
     }
     children.push(match_name("ADBE Group End")?);
@@ -252,13 +257,22 @@ fn validate_track(
     Ok(())
 }
 
-fn mask_info(mask: &NativeMaskSpec, index: u16) -> [u8; 48] {
+/// Native identity of the mask at zero-based `position` in a fresh parade:
+/// the `mkif` identity word, which is the one-based parade index. Effect
+/// Compositing Options reference a mask by this identity (`tdli`), as the
+/// natively saved `color_ae_effect_compositing_options.aep` shows (Mask 1 has
+/// identity 1 and its effect reference stores 1).
+pub(crate) fn native_identity(position: usize) -> Option<u32> {
+    u16::try_from(position + 1).ok().map(u32::from)
+}
+
+fn mask_info(mask: &NativeMaskSpec, identity: u32) -> [u8; 48] {
     // The reader-owned layout establishes these typed fields. Unused/reserved
     // fields are canonical zeroes in fresh records; no source payload is copied.
     let mut bytes = [0_u8; 48];
     bytes[0] = u8::from(mask.inverted);
     bytes[6..8].copy_from_slice(&mask.mode.ordinal().to_be_bytes());
-    bytes[8..12].copy_from_slice(&u32::from(index).to_be_bytes());
+    bytes[8..12].copy_from_slice(&identity.to_be_bytes());
     bytes
 }
 
@@ -429,8 +443,9 @@ mod tests {
     fn mask_info_uses_stable_one_based_index_and_mode() {
         let mask =
             NativeMaskSpec::crop_rectangle("Guide", [100, 100], [0.0, 0.0, 10.0, 10.0]).unwrap();
-        let bytes = mask_info(&mask, 7);
+        let bytes = mask_info(&mask, native_identity(6).unwrap());
         assert_eq!(u16::from_be_bytes([bytes[6], bytes[7]]), 1);
         assert_eq!(u32::from_be_bytes(bytes[8..12].try_into().unwrap()), 7);
+        assert_eq!(native_identity(usize::from(u16::MAX)), None);
     }
 }

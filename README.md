@@ -40,7 +40,6 @@ result and any warnings. See [supported features and limitations](docs/formats/R
 | 0.2.0 | 69 |
 | 0.2.1 | 70 |
 | 0.3.0 | 77 |
-| 0.4.0 | 80 |
 
 `fxSchemaVersion` is the FX schema inventory revision, not the `.tsrct` container
 format version or a compatibility gate. New `.tsrct` files record it in

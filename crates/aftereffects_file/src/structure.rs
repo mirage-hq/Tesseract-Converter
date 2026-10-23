@@ -59,6 +59,8 @@ pub struct StructuralProject {
     pub color: ProjectColorContext,
     /// Binary format revision from the `head` record.
     pub format_version: u8,
+    /// After Effects release that saved the project (`head` producer word).
+    pub producer: crate::schema::ProducerVersion,
     /// File-local Effect definitions, retained separately from untouched layer content.
     /// Used only when an occurrence's own declaration table is empty.
     pub effect_definitions: Vec<Chunk>,
@@ -72,16 +74,50 @@ pub enum ProjectColorContext {
     /// No declared working profile; retain the existing legacy interpretation.
     #[default]
     Legacy,
-    /// Exact owned ICC bytes in a non-linearized native working space.
+    /// A declared SDR working domain whose point colours are admitted with the
+    /// legacy numeric interpretation; `declaration` names it for the diagnostic.
+    LegacyDeclared { declaration: String },
+    /// An exactly identified PQ/HLG ICC payload in a non-linearized native
+    /// working space.
     Hdr {
         transfer: fx_conv::HdrTransfer,
         linear_blending: bool,
+        binding: HdrProfileBinding,
     },
+    /// An OCIO colour-managed project with a built-in ACES 2.0 config
+    /// (`config`) and the ACEScg working colour space: an FX ACES document
+    /// (see `ocio`).
+    Aces { config: String },
     /// An explicit domain that has no proved point-colour binding yet.
     Unsupported {
         profile: String,
         reason: &'static str,
     },
+}
+
+/// The proved working-profile identity behind [`ProjectColorContext::Hdr`].
+///
+/// Native point colours in a non-linearized working space are transfer-encoded
+/// code values, so their absolute luminance is fixed by the transfer alone. The
+/// binding only chooses which luminance becomes FX graphics white (FX `1.0`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HdrProfileBinding {
+    /// This converter's owned PQ/HLG ICC profile; FX white stays the FX default.
+    OwnedIcc,
+    /// After Effects 26.5's built-in "Rec.2100 PQ" ICC, identified by its exact
+    /// payload. FX white is the 100 cd/m² reference luminance its `lumi` tag
+    /// declares, so AE's own SDR-white mapping of the profile stays FX white.
+    AdobeRec2100Pq,
+}
+
+impl HdrProfileBinding {
+    /// FX `hdrGraphicsWhiteNits` written with, and used to decode, the points.
+    pub fn graphics_white_nits(self) -> f64 {
+        match self {
+            Self::OwnedIcc => fx_conv::DEFAULT_GRAPHICS_WHITE_NITS,
+            Self::AdobeRec2100Pq => 100.0,
+        }
+    }
 }
 
 mod markers;
@@ -115,6 +151,9 @@ pub struct ProjectItem {
     /// Native source identity and A/V kind, independent of image-specific metadata.
     /// `None` means this item does not declare a main file source.
     pub native_media: Option<Result<MediaDescriptor, MediaDecodeError>>,
+    /// The OCIO input colourspace the main file source declares (an OCIO
+    /// colour-managed project's footage interpretation).
+    pub ocio_input: Option<String>,
 }
 
 /// Source classifications evidenced by footage `Pin `/`opti` records.
@@ -237,6 +276,7 @@ pub(crate) fn read_project_with_header(
         StructuralProject {
             color,
             format_version: head.format_version(),
+            producer: head.producer_version(),
             effect_definitions,
             items: state.items,
         },
@@ -306,6 +346,9 @@ impl ReadState {
             } else {
                 None
             };
+        let ocio_input = main_source
+            .filter(|_| footage.is_some_and(|source| source.main_source == FootageSourceKind::File))
+            .and_then(crate::ocio::footage_input);
         self.items.push(ProjectItem {
             id,
             name,
@@ -315,6 +358,7 @@ impl ReadState {
             solid,
             media,
             native_media,
+            ocio_input,
         });
 
         if item_type == 1 {

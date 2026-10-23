@@ -3205,6 +3205,82 @@ fn hdr_graphic_source_decodes_points_without_rewriting_earlier_sibling_animators
     }
 }
 
+/// An admitted HDR sequence writes its own graphics white, decodes HDR
+/// Graphic points against it, and hints the explicit HDR delivery flag.
+#[test]
+fn hdr_sequence_graphics_white_sets_document_white_and_graphic_decoding() {
+    for (transfer, flag) in [
+        (
+            fx_conv::HdrTransfer::Pq,
+            "PQ; FX documents carry no HDR delivery target, so use `tsrct export --hdr pq`",
+        ),
+        (
+            fx_conv::HdrTransfer::Hlg,
+            "HLG; FX documents carry no HDR delivery target, so use `tsrct export --hdr hlg`",
+        ),
+    ] {
+        let white = 203.0;
+        let native = fx_conv::HdrColorBridge::new(transfer, Some(white))
+            .unwrap()
+            .to_native([1.0, 1.0, 1.0, 1.0])
+            .unwrap();
+        let mut graphic = shape_graphic();
+        graphic.hdr = Some(transfer);
+        let crate::schema::text::PrGraphicObject::Shape(shape) = &mut graphic.objects[0] else {
+            panic!("shape fixture");
+        };
+        let code = (native[0] * 255.0).round() as u8;
+        shape.appearance.fill = Some(crate::schema::text::PrFill::Solid(
+            crate::schema::text::PrRgb([code; 3]),
+        ));
+        let mut sequence = video_sequence();
+        sequence.hdr = Some(crate::schema::SequenceHdr {
+            transfer,
+            graphics_white: white,
+        });
+        sequence.video_tracks.push(PrVideoTrack {
+            items: vec![PrVideoItem::Graphic(graphic)],
+            transitions: Vec::new(),
+            nests: Vec::new(),
+        });
+        let media = video_media();
+        let mut omissions = Vec::new();
+        let document = premiere_to_tesseract(
+            &sequence,
+            &media,
+            &crate::tesseract_output::asset_ids_in_order(&sequence, &media),
+            &mut omissions,
+        )
+        .unwrap()
+        .to_json_value()
+        .unwrap();
+        assert_eq!(document["hdrGraphicsWhiteNits"], json!(white));
+        let shape = document["composition"]["layers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|layer| layer["type"] == "Shape")
+            .unwrap();
+        let actual: [f64; 4] =
+            serde_json::from_value(shape["shape"]["fills"][0]["paint"]["color"].clone()).unwrap();
+        // Only 8-bit native storage separates the decoded point from FX white.
+        for channel in &actual[..3] {
+            assert!((channel - 1.0).abs() < 0.01, "{actual:?}");
+        }
+        let reasons: Vec<_> = omissions.iter().map(|item| item.reason.as_str()).collect();
+        assert!(
+            reasons.contains(&"declared HDR Graphic source point colours normalized to FX graphics white 203 cd/m²; native 8-bit storage, encoded interpolation, effects/blends and destination white/tone/gamut adaptation remain unproved"),
+            "{reasons:?}"
+        );
+        assert!(
+            reasons.iter().any(|reason| *reason
+                == format!("hint: sequence output is Rec.2100 {flag} to deliver it")),
+            "{reasons:?}"
+        );
+        assert!(!reasons.iter().any(|reason| reason.contains("FX 609")));
+    }
+}
+
 #[test]
 fn extended_shape_color_exports_clipped_with_contextual_diagnostic() {
     let mut layer = imported_object(shape_graphic());

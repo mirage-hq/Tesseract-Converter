@@ -207,6 +207,8 @@ pub(super) struct MediaIds {
     pub(super) template_clip_uid: String,
     pub(super) master: Uid<MasterClipId>,
     pub(super) item: Uid<ClipProjectItem>,
+    /// The `LUTAsset` of a media with an Interpret Footage Input LUT.
+    pub(super) input_lut: Option<ObjectId<LutAsset>>,
 }
 
 #[derive(Debug)]
@@ -606,6 +608,13 @@ impl ProjectIds {
             media.push(MediaIds::allocate(&mut ids));
         }
         for (spec, media) in media_specs.iter().zip(&mut media) {
+            if spec
+                .video
+                .as_ref()
+                .is_some_and(|video| video.input_lut.is_some())
+            {
+                media.input_lut = Some(ids.take());
+            }
             if let Some(audio) = &spec.audio {
                 let channels = audio.channels.count();
                 media.audio = Some(AudioMediaIds {
@@ -779,6 +788,7 @@ impl MediaIds {
             template_clip_uid: uuid(),
             master: Uid::random(),
             item: Uid::random(),
+            input_lut: None,
         }
     }
 }

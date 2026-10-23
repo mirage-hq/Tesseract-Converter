@@ -434,6 +434,20 @@ impl<'a> EffectScope<'a> {
                 "masked effect cannot be exported atomically: {notes:?}"
             ));
         }
+        // The Lumetri writer has no masked form; report it here rather than
+        // fail the written project.
+        if matches!(
+            masked[0].params,
+            PrEffectParams::LumetriGrade(_)
+                | PrEffectParams::LumetriVignette(_)
+                | PrEffectParams::LumetriCurves(_)
+                | PrEffectParams::LumetriWheels(_)
+                | PrEffectParams::LumetriHueCurves(_)
+                | PrEffectParams::LumetriInputLut(_)
+                | PrEffectParams::LumetriLook(_)
+        ) {
+            return Err("a masked Lumetri Color has no established native written form".into());
+        }
         let mask = self.native_mask(dynamics, source_in)?;
         for warning in mask.approximations() {
             approximate(&mut notes, "effect mask", warning);

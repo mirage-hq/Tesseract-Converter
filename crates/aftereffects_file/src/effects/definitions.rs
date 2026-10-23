@@ -86,6 +86,24 @@ impl ParameterDefinition {
             _ => None,
         }
     }
+
+    /// AE's declared *valid* range (wider than the UI slider range written as
+    /// the property bounds) for fixed (kind 2, payload words 17..19 as 16.16)
+    /// and float (kind 10, payload words 12..14 as f32) sliders. Export never
+    /// writes a value outside it; AE's handling of such values is unmeasured.
+    pub(crate) fn valid_range(&self) -> Option<(f64, f64)> {
+        let words = &self.payload_words;
+        if words.len() != 23 {
+            return None;
+        }
+        let fixed = |word: u32| f64::from(word as i32) / 65_536.0;
+        let float = |word: u32| f64::from(f32::from_bits(word));
+        match self.kind {
+            2 => Some((fixed(words[17]), fixed(words[18]))),
+            10 => Some((float(words[12]), float(words[13]))),
+            _ => None,
+        }
+    }
 }
 
 /// Rebuild a `pard` from explicitly typed ABI declarations, never from a
@@ -125,7 +143,7 @@ mod tests {
 
     #[test]
     fn canonical_catalog_contains_hidden_root_and_builtin_group() {
-        assert_eq!(registry().len(), 34);
+        assert_eq!(registry().len(), 40);
         let blur = definition("ADBE Gaussian Blur 2").unwrap();
         assert_eq!(blur.parameters.len(), 5);
         assert_eq!(blur.parameters[0].match_name, "ADBE Gaussian Blur 2-0000");
@@ -179,6 +197,40 @@ mod tests {
             invert.parameters[2].values([1920.0, 1080.0]),
             Some(vec![0.0])
         );
+    }
+
+    #[test]
+    fn color_correction_catalog_matches_fresh_adobe_readback() {
+        for (match_name, count) in [
+            ("ADBE Lumetri", 132),
+            ("ADBE CurvesCustom", 4),
+            ("ADBE Color Balance 2", 12),
+            ("ADBE CHANNEL MIXER", 15),
+            ("ADBE SelectiveColor", 64),
+        ] {
+            let effect = definition(match_name).unwrap();
+            assert_eq!(effect.parameters.len(), count, "{match_name}");
+            assert_eq!(
+                effect.parameters[0].match_name,
+                format!("{match_name}-0000")
+            );
+        }
+        let lumetri = definition("ADBE Lumetri").unwrap();
+        let control = |name: &str| {
+            lumetri
+                .parameters
+                .iter()
+                .find(|p| p.match_name == name)
+                .unwrap()
+        };
+        // Lumetri's private grade blob is arbitrary data, not a numeric control.
+        assert_eq!(control("ADBE Lumetri-0001").kind, 11);
+        assert!(control("ADBE Lumetri-0001").defaults.is_empty());
+        assert_eq!(control("ADBE Lumetri-0011").label, "Exposure");
+        assert_eq!(control("ADBE Lumetri-0020").defaults, vec![100.0]);
+        let mixer = definition("ADBE CHANNEL MIXER").unwrap();
+        assert_eq!(mixer.parameters[1].defaults, vec![100.0]);
+        assert_eq!(mixer.parameters[2].defaults, vec![0.0]);
     }
 
     #[test]

@@ -69,6 +69,8 @@ pub struct StagedAfterEffectsExport {
     directory: tempfile::TempDir,
     pub(super) publication_files: Vec<RelativeMediaPath>,
     pub(super) font_files: Vec<String>,
+    /// `.cube` files of the embedded Apply Color LUTs, beside the project.
+    pub(super) lut_files: Vec<String>,
     pub(super) report: ConversionReport<ExportDiagnostic>,
     root: GeneratedRootComposition,
     omitted_layer_ids: BTreeSet<LayerId>,
@@ -494,8 +496,10 @@ fn prepare_with_project_writer(
         None => script_bake::prepare_with_progress(document, options, progress)?,
     };
     let fonts = crate::export_document::fonts::ArchiveFonts::prepare(archive)?;
+    let luts = crate::export_document::apply_color_lut::ArchiveLuts::prepare(archive, document)?;
     let mut documents = ExportDocumentViews::from_preparation(document, baked.document.as_ref())
         .with_fonts(&fonts)
+        .with_luts(&luts)
         .with_hdr(options.hdr);
     let prepare_media = target.roots.is_some();
     if let Some(roots) = target.roots {
@@ -601,6 +605,15 @@ fn prepare_with_project_writer(
             message: "Embedded fonts used by exported Text are copied byte-for-byte into fonts/ with manifest.json. Install these fonts before opening/rendering in After Effects; a package-relative fonts folder does not activate them. Font redistribution remains subject to their licenses.".into(),
         });
     }
+    let mut lut_files = Vec::new();
+    for (name, lut) in
+        crate::export_document::apply_color_lut::published_files(&luts, &converted.embedded_luts)
+    {
+        let path = directory.path().join(&name);
+        std::fs::write(&path, &lut.bytes)
+            .map_err(|error| AepConversionError::io("write LUT file", &path, error))?;
+        lut_files.push(name);
+    }
     if let Some(destination) = target.alias_directory {
         package::aliases::bind_published_media_aliases(
             &mut converted.bytes,
@@ -622,11 +635,13 @@ fn prepare_with_project_writer(
                 .map(|path| Artifact::media(path.as_str())),
         )
         .chain(font_files.iter().map(|path| Artifact::media(path.as_str())))
+        .chain(lut_files.iter().map(|path| Artifact::media(path.as_str())))
         .collect();
     Ok(StagedAfterEffectsExport {
         directory,
         publication_files,
         font_files,
+        lut_files,
         root: converted.root,
         omitted_layer_ids: converted.omitted_layer_ids,
         unsupported_media_layer_ids,

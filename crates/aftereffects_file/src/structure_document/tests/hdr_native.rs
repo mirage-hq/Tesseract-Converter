@@ -174,3 +174,143 @@ fn native_saturated_bt2020_import_keeps_six_nonblack_editable_paints() {
         );
     }
 }
+
+/// The natively authored AE 26.5 project with the built-in "Rec.2100 PQ"
+/// working space (32 bpc, non-linearized) and one Solid authored as [2, 2, 2].
+#[test]
+fn native_built_in_rec2100_pq_project_imports_as_hdr_with_profile_white() {
+    let bytes = include_bytes!("../../../tests/fixtures/color_ae_rec2100_pq_project.aep");
+    assert_eq!(
+        format!("{:x}", Sha256::digest(bytes)),
+        "1be8348f26fdca009d01fce9f9efac4f26d840ae942dfcbc8f2305caa42cb465"
+    );
+    let project = read_project(bytes).unwrap();
+    assert_eq!(
+        project.color,
+        crate::structure::ProjectColorContext::Hdr {
+            transfer: fx_conv::HdrTransfer::Pq,
+            linear_blending: false,
+            binding: crate::structure::HdrProfileBinding::AdobeRec2100Pq,
+        }
+    );
+    let imported = to_structural_fx_document(&project, Some(1)).unwrap();
+    let value = imported.document.to_json_value().unwrap();
+    assert_eq!(value["hdrGraphicsWhiteNits"], 100.0);
+    assert!(
+        imported.diagnostics.iter().any(|d| {
+            d.limitation == Limitation::ColorManagement
+                && d.message.contains("AE built-in \"Rec.2100 PQ\"")
+                && d.message.contains("FX graphics white 100 nits")
+        }),
+        "{:#?}",
+        imported.diagnostics
+    );
+    assert!(!imported.diagnostics.iter().any(|d| {
+        d.message.contains("is not bound") || d.message.contains("legacy numeric colour")
+    }));
+    // The authored 32 bpc super-white Solid [2, 2, 2] lies past the PQ peak code
+    // 1.0 (10000 cd/m²), where the transfer curve ends. It imports as an editable
+    // solid whose light continues linearly past the peak (twice the peak), with
+    // a colour-management diagnostic, not as a non-rendering placeholder.
+    let mut layers = Vec::new();
+    descendants(&value["composition"], &mut layers);
+    let rects: Vec<_> = layers
+        .iter()
+        .filter(|layer| layer["type"] == "Rect")
+        .collect();
+    assert_eq!(rects.len(), 1, "{value}");
+    // The solid source geometry stays decoded, so its occurrence keeps the
+    // source-size default anchor and covers the comp.
+    let occurrence = layers
+        .iter()
+        .find(|layer| layer["type"] == "Group" && layer["name"] == "Solid")
+        .unwrap();
+    assert_eq!(
+        occurrence["transform"]["anchorPoint"],
+        serde_json::json!([960.0, 540.0])
+    );
+    assert_eq!(
+        occurrence["transform"]["position"],
+        serde_json::json!([960.0, 540.0])
+    );
+    let bridge = fx_conv::HdrColorBridge::new(fx_conv::HdrTransfer::Pq, Some(100.0))
+        .unwrap()
+        .with_super_white_headroom();
+    let expected = bridge.to_fx([2.0, 2.0, 2.0, 1.0]).unwrap();
+    let peak = bridge.to_fx([1.0, 1.0, 1.0, 1.0]).unwrap();
+    let fill: [f64; 4] = serde_json::from_value(rects[0]["rect"]["fillColor"].clone()).unwrap();
+    assert!(
+        fill.iter().zip(expected).all(|(a, b)| (a - b).abs() < 1e-9),
+        "{fill:?} expected {expected:?}"
+    );
+    assert!(
+        fill[0] > peak[0],
+        "{fill:?} must lie above the PQ peak {peak:?}"
+    );
+    assert!(
+        imported.diagnostics.iter().any(|d| {
+            d.limitation == Limitation::ColorManagement
+                && d.message
+                    .contains("native super-white code values [2.0, 2.0, 2.0]")
+                && d.message.contains("continuing linearly past the peak")
+        }),
+        "{:#?}",
+        imported.diagnostics
+    );
+    assert!(
+        !imported
+            .diagnostics
+            .iter()
+            .any(|d| d.message.contains("invalid solid color")
+                || d.message.contains("replaced by black")),
+        "{:#?}",
+        imported.diagnostics
+    );
+}
+
+/// A pre-`PwCs` project (format 93, After Effects 17.0) without a working
+/// space converts with the legacy interpretation, a named producer version and
+/// no unreadable-declaration fallback.
+#[test]
+fn pre_declaration_project_converts_as_declared_legacy_with_the_producer_named() {
+    let bytes = crate::hdr::pre_declaration_project().encode().unwrap();
+    let project = read_project(&bytes).unwrap();
+    assert_eq!(project.format_version, 93);
+    assert_eq!(project.producer.to_string(), "After Effects 17.0 build 26");
+    assert!(matches!(
+        project.color,
+        crate::structure::ProjectColorContext::LegacyDeclared { .. }
+    ));
+    let imported = to_structural_fx_document(&project, Some(1)).unwrap();
+    let messages: Vec<_> = imported
+        .diagnostics
+        .iter()
+        .map(|d| (d.limitation, d.message.as_str()))
+        .collect();
+    assert!(
+        messages.contains(&(
+            Limitation::Version,
+            "project saved by After Effects 17.0 build 26 (project format 93), older than the After Effects 26 reference layout (format 97, measured from 26.0 to 26.5 saves); records are parsed using the known record layouts and unread fields are diagnosed where they occur"
+        )),
+        "{messages:#?}"
+    );
+    assert!(
+        messages.contains(&(
+            Limitation::ColorManagement,
+            "working space admitted as legacy: project format 93 predates the PwCs working-profile declaration; its cpid declares no working space (After Effects \"None\"); point colours are imported as unchanged display-referred numeric values, the same interpretation as a project without colour management"
+        )),
+        "{messages:#?}"
+    );
+    assert!(
+        !messages
+            .iter()
+            .any(|(_, m)| m.contains("unreadable working declaration")),
+        "{messages:#?}"
+    );
+    // The legacy interpretation leaves the document's colour domain unbound.
+    let value = imported.document.to_json_value().unwrap();
+    assert!(
+        value.get("hdrGraphicsWhiteNits").is_none_or(Value::is_null),
+        "{value}"
+    );
+}

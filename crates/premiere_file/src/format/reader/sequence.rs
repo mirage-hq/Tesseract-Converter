@@ -196,6 +196,8 @@ pub(super) fn read_sequence_tracks_at(
     let sequence_record = sequences[0];
     let sequence_identity = sequence_record.identity();
     let sequence_element = sequence_record.element();
+    // Older saves (`Sequence` Version 11) also write `ID`, an editing
+    // identity with no picture semantics; it is admitted and not retained.
     video::report_unknown_children(
         sequence_element,
         &[
@@ -204,6 +206,7 @@ pub(super) fn read_sequence_tracks_at(
             "TrackGroups",
             "Name",
             "PreviewFormatIdentifier",
+            "ID",
         ],
         &sequence_identity,
         "",
@@ -303,17 +306,32 @@ pub(super) fn read_sequence_tracks_at(
             "AllowLinearCompositing",
             "ToneMappingAlgorithm",
             "GamutCompressionAlgorithm",
+            "ToneMappingDesaturation",
+            "ToneMappingKnee",
             "AutoInputGamutCompressionEnabled",
             "IsGraphicsWhiteSameAsProject",
             "IsColorAwareEffectsEnabledSameAsProject",
             "FrameRect",
             "PixelAspectRatio",
             "ComponentOwner",
+            "FieldType",
         ],
         &video_identity,
         "",
         omissions,
     );
+    // Older saves write the sequence field order; 0 is progressive, which is
+    // how every converted picture is drawn.
+    if let Some(field_type) = video_record.element().child("FieldType") {
+        if field_type.text().map(str::trim) != Some("0") {
+            omit(
+                omissions,
+                OmissionScope::Feature,
+                &video_identity,
+                "nondefault FieldType not converted",
+            );
+        }
+    }
     if let Some(track_group) = video_record.element().child("TrackGroup") {
         video::report_unknown_children(
             track_group,
@@ -333,7 +351,12 @@ pub(super) fn read_sequence_tracks_at(
         );
     }
     let video = graph.decode::<VideoTrackGroup>(video_record)?;
-    let hdr = super::hdr::sequence(graph, &video, omissions);
+    let aces = super::color_setup::sequence(&video, omissions);
+    // An ACEScct working space is not an HDR working space.
+    let hdr = aces
+        .is_none()
+        .then(|| super::hdr::sequence(graph, &video, omissions))
+        .flatten();
     let native_frame_ticks = video
         .value
         .track_group
@@ -382,6 +405,7 @@ pub(super) fn read_sequence_tracks_at(
         .ok_or_else(|| unsupported("sequence GUID missing"))?;
     let mut parsed = PrSequence {
         hdr,
+        aces,
         native_frame_ticks: native_frame_ticks
             .filter(|ticks| *ticks != frame_rate.ticks_per_frame()),
         id: Some(sequence_id),
@@ -394,6 +418,7 @@ pub(super) fn read_sequence_tracks_at(
         height,
         timeline_end_ticks,
         adjustment_only_template,
+        empty_template_placeholder: false,
     };
     super::nested::play_alone(graph, alone, &mut parsed, media, nesting, omissions);
     if selected_video_track.is_none() {
@@ -426,11 +451,13 @@ pub(super) fn read_sequence_tracks_at(
         && parsed.audio.is_empty()
         && !(parsed.adjustment_only_template && parsed.timeline_end_ticks > 0)
     {
-        if nesting.reads_inner_timeline()
-            && all_groups_resolved
-            && empty_native_sequence(graph, &groups)
-        {
-            return Err(BuildError::EmptyNativeSequence(sequence_identity));
+        if all_groups_resolved && empty_native_sequence(graph, &groups) {
+            return Ok(empty_template_placeholder(
+                parsed,
+                &sequence_identity,
+                nesting.reads_inner_timeline(),
+                omissions,
+            ));
         }
         return Err(unsupported(format!(
             "no convertible video or audio occurrences: {}",
@@ -446,6 +473,44 @@ pub(super) fn read_sequence_tracks_at(
     parsed.validate_timeline(media)?;
     Ok(parsed)
 }
+
+/// Native membership of `sequence` is empty: a template drop zone ("Media"
+/// sequences that a template nests under its looks, for the user to fill
+/// later). Premiere renders an empty sequence as nothing, so it converts to
+/// no content and its placements keep their Motion, Opacity and effects on an
+/// empty group, with a caveat naming the placeholder. An empty top-level
+/// sequence has no duration, which an FX document cannot have: it becomes a
+/// one-frame empty canvas, reported as an approximation.
+fn empty_template_placeholder(
+    mut sequence: PrSequence,
+    identity: &str,
+    nested: bool,
+    omissions: &mut Vec<Omission>,
+) -> PrSequence {
+    sequence.empty_template_placeholder = true;
+    omit(
+        omissions,
+        OmissionScope::Feature,
+        identity,
+        format!(
+            "{EMPTY_TEMPLATE_PLACEHOLDER} {:?} has no source occurrences; Premiere renders it as nothing, so it converts to an empty group that keeps its placements' Motion, Opacity and effects",
+            sequence.name
+        ),
+    );
+    if !nested && sequence.timeline_end_ticks == 0 {
+        sequence.timeline_end_ticks = sequence.native_frame_rate().ticks_per_frame();
+        crate::approximate(
+            omissions,
+            identity,
+            "empty template placeholder sequence has no duration; converted as a one-frame empty canvas",
+        );
+    }
+    sequence
+}
+
+/// Opens the caveat on an empty template placeholder sequence and on the
+/// audio items that play one.
+pub(super) const EMPTY_TEMPLATE_PLACEHOLDER: &str = "empty template placeholder sequence";
 
 #[cfg(test)]
 mod tests {

@@ -387,6 +387,15 @@ pub(crate) struct VideoTrackGroup {
     pub(crate) gamut_compression_algorithm: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) auto_input_gamut_compression_enabled: Option<String>,
+    /// Premiere 26.5.x saves `0.5` on SDR and Rec.2100 sequences alike;
+    /// import reports another value as an unconverted tone-mapping control.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) tone_mapping_desaturation: Option<String>,
+    /// Premiere 26.5.2 saves f32 0.2 (PQ) or 0.18 (HLG) on a Rec.2100
+    /// sequence created from a clip; import reports any other value, and any
+    /// value on an SDR sequence, as an unconverted tone-mapping control.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) tone_mapping_knee: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) is_graphics_white_same_as_project: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]

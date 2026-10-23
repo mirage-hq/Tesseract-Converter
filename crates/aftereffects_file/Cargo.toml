@@ -30,9 +30,9 @@ thiserror.workspace = true
 serde.workspace = true
 serde_json = { workspace = true, features = ["raw_value"] }
 sha2.workspace = true
+roxmltree.workspace = true
 image = { workspace = true, features = ["exr"] }
 media_transcode = { path = "../media_transcode", default-features = false }
 
 [dev-dependencies]
-roxmltree.workspace = true
 flate2 = "1"

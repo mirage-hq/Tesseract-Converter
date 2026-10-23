@@ -227,12 +227,11 @@ fn validate_appearance(paint: &VectorAppearance) -> Result<(), AepWriteError> {
             "native shape requires exactly one solid Fill or Stroke",
         ));
     }
-    if paint
+    if !paint
         .fill_color
         .iter()
         .chain(paint.stroke_color.iter())
-        .flatten()
-        .any(|value| !value.is_finite() || !(0.0..=1.0).contains(value))
+        .all(|color| super::paint_color_is_valid(color))
         || !paint.paint_opacity.is_finite()
         || !(0.0..=100.0).contains(&paint.paint_opacity)
         || !paint.stroke_width.is_finite()

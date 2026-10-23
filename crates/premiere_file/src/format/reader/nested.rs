@@ -157,11 +157,6 @@ pub(super) enum NestedVideo {
     Media(Box<crate::schema::PrVideoOccurrence>),
 }
 
-enum ReadFailure {
-    EmptyNativeSequence(String),
-    Other(String),
-}
-
 /// Recursion state for one top-level sequence read.
 pub(super) struct Nesting<'a> {
     /// Timelines on a nesting cycle in the project topology.
@@ -175,7 +170,7 @@ pub(super) struct Nesting<'a> {
     /// reuses it, whatever the track order. A failure keeps its reason. A read
     /// that met a cycle is kept too: its closing placement is already omitted
     /// and reported.
-    finished: BTreeMap<ReadKey, std::result::Result<InnerRead, ReadFailure>>,
+    finished: BTreeMap<ReadKey, std::result::Result<InnerRead, String>>,
 }
 
 impl<'a> Nesting<'a> {
@@ -235,24 +230,12 @@ impl<'a> Nesting<'a> {
             );
             self.depth = level - 1;
             self.open.pop();
-            let read = read
-                .map_err(|error| match error {
-                    BuildError::EmptyNativeSequence(sequence) => {
-                        ReadFailure::EmptyNativeSequence(sequence)
-                    }
-                    other => ReadFailure::Other(reason(other)),
-                })
-                .map(Self::keep);
+            let read = read.map_err(reason).map(Self::keep);
             self.finished.insert(key.clone(), read);
         }
         match self.finished.get_mut(&key).expect("each read is cached") {
             Ok(read) => Ok((key, read)),
-            Err(ReadFailure::EmptyNativeSequence(sequence)) => {
-                Err(BuildError::EmptyNativeSequence(sequence.clone()))
-            }
-            Err(ReadFailure::Other(reason)) => {
-                Err(unsupported(format!("nested sequence {guid}: {reason}")))
-            }
+            Err(reason) => Err(unsupported(format!("nested sequence {guid}: {reason}"))),
         }
     }
 
@@ -574,16 +557,22 @@ pub(super) fn read_nest(
         return Err(unsupported(reason));
     }
     let source_duration = read_sequence_source(graph, placement.source_record, omissions)?;
-    let (key, read) = match nesting.read(graph, guid, media, omissions, None) {
-        Err(error @ BuildError::EmptyNativeSequence(_))
-            if !placement.enabled || !parent.track_output =>
-        {
+    let (key, read) = nesting.read(graph, guid, media, omissions, None)?;
+    // An empty template placeholder becomes an empty group, except where an
+    // empty input meets a Track Matte Key or a disabled placement: there the
+    // native empty-input behavior is unverified, so the earlier omission and
+    // matte-concealment rules stay.
+    if read.nest.sequence.empty_template_placeholder {
+        let empty = BuildError::EmptyNativeSequence(format!("Sequence:{guid}"));
+        if !placement.enabled || !parent.track_output {
             return Err(unsupported(format!(
-                "{identity}: disabled keyed empty-input behavior remains unverified: {error}"
+                "{identity}: disabled keyed empty-input behavior remains unverified: {empty}"
             )));
         }
-        result => result?,
-    };
+        if placement.track_matte.is_some() {
+            return Err(empty);
+        }
+    }
     let id = item.identity;
     let nest = &mut read.nest;
     if transform_stage {
@@ -1084,6 +1073,9 @@ pub(super) fn pair_sounds(
             let plays_alone = match matching.as_slice() {
                 [] => false,
                 [sound] if sound.enabled == nest.enabled && sound.volume_keys.is_none() => {
+                    if nest.sequence.empty_template_placeholder {
+                        placeholder_sound(omissions, &sound.id, &nest.sequence.name);
+                    }
                     fold_gain(&mut nest.sequence, sound.gain)?;
                     kept.push(nest);
                     continue;
@@ -1094,7 +1086,9 @@ pub(super) fn pair_sounds(
                 }
             };
             silence(&mut nest.sequence);
-            if nest.sequence.expanded_occurrence_count() > 0 {
+            if nest.sequence.expanded_occurrence_count() > 0
+                || nest.sequence.empty_template_placeholder
+            {
                 kept.push(nest);
             } else if !plays_alone {
                 omit(
@@ -1109,6 +1103,20 @@ pub(super) fn pair_sounds(
     }
     alone.extend(unpaired.into_iter().flatten());
     Ok(alone)
+}
+
+/// Reports the audio item `item` of the empty template placeholder sequence
+/// `name`: it plays nothing, so it is dropped.
+fn placeholder_sound(omissions: &mut Vec<Omission>, item: &str, name: &str) {
+    omit(
+        omissions,
+        OmissionScope::Feature,
+        item,
+        format!(
+            "{} {name:?} has no source occurrences; its audio item plays nothing and is dropped",
+            super::sequence::EMPTY_TEMPLATE_PLACEHOLDER
+        ),
+    );
 }
 
 /// Plays each audio item of `sounds`, which no nest's group carries, as sound
@@ -1159,6 +1167,10 @@ fn heard_alone(
     let (_, read) = nesting
         .read(graph, &sound.sequence, media, omissions, None)
         .map_err(reason)?;
+    if read.nest.sequence.empty_template_placeholder {
+        placeholder_sound(omissions, &sound.id, &read.nest.sequence.name);
+        return Ok(Vec::new());
+    }
     let shift = sound
         .timeline
         .start
@@ -1516,16 +1528,18 @@ fn fold_gain(sequence: &mut PrSequence, gain: f64) -> Result<()> {
 }
 
 /// Drops every sound of `sequence` and of the nests inside it, and every
-/// inner nest left empty; nothing of it was audible.
+/// inner nest left empty; nothing of it was audible. An empty template
+/// placeholder had no sound to drop and stays.
 fn silence(sequence: &mut PrSequence) {
     sequence.audio.clear();
     for track in &mut sequence.video_tracks {
         for nest in &mut track.nests {
             silence(&mut nest.sequence);
         }
-        track
-            .nests
-            .retain(|nest| nest.sequence.expanded_occurrence_count() > 0);
+        track.nests.retain(|nest| {
+            nest.sequence.empty_template_placeholder
+                || nest.sequence.expanded_occurrence_count() > 0
+        });
     }
 }
 

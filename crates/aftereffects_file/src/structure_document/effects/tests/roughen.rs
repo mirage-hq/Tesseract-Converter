@@ -96,6 +96,7 @@ fn sparse_roughen_uses_only_same_file_declared_mode_default() {
                 composition: None,
                 items: None,
                 effect_definitions: &definitions,
+                grade_domain: crate::effects::color_grades::ColorGradeDomain::Legacy,
             },
             &owner,
             PLANE,

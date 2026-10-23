@@ -997,6 +997,7 @@ fn audio_project(occurrences: Vec<(&str, AudioChannels, f64)>) -> PrProjectFile 
     video.video.as_mut().unwrap().kind = crate::schema::PrMediaKind::Video {
         codec: Some(crate::schema::VideoCodec::H264),
         hdr_profile: None,
+        color_space_override: None,
     };
     video.relative_path = Some("./media/source.mp4".into());
     video.relative_paths = vec!["./media/source.mp4".into()];

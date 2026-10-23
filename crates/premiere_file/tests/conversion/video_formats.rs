@@ -1052,3 +1052,86 @@ fn same_named_hdr_media_and_repeated_placements_each_warn_once_per_record() {
     let again = TesseractFile::open(first_project(&root.join("again"))).unwrap();
     assert_eq!(again.metadata().assets.len(), 3);
 }
+
+/// The pinned 10-bit HLG HEVC source placed in an explicit PQ or HLG
+/// sequence: export keeps its bytes and Premiere's HLG source profile, and a
+/// fresh import of that project admits the sequence target, keeps the bytes
+/// and writes the default graphics white. Our writer's project is the input,
+/// so this is round-trip evidence, not an Adobe-authored HDR sequence.
+#[test]
+fn hlg_hevc_in_an_hdr_sequence_keeps_its_bytes_in_both_directions() {
+    use fx_conv::{ConversionMode, ExportFromTesseract};
+    use premiere_file::PremiereExportOptions;
+    for (transfer, name) in [
+        (fx_conv::HdrTransfer::Pq, "PQ"),
+        (fx_conv::HdrTransfer::Hlg, "HLG"),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        convert_hdr(root);
+        let native = root.join("native");
+        Premiere
+            .export_from_tesseract(
+                &first_project(&root.join("converted")),
+                &native,
+                &PremiereExportOptions {
+                    hdr: Some(transfer),
+                    ..Default::default()
+                },
+                ConversionMode::Write,
+            )
+            .unwrap();
+        let xml = read_xml(&native.join("project.prproj"));
+        assert_eq!(
+            xml.matches(&format!(
+                "<OriginalColorSpace>{HLG_PROFILE}</OriginalColorSpace>"
+            ))
+            .count(),
+            1
+        );
+        assert_eq!(
+            fs::read(native.join("media").join(HLG)).unwrap(),
+            fs::read(fixture_path(HLG)).unwrap()
+        );
+        let omissions = premiere_to_tesseract(
+            native.join("project.prproj"),
+            root.join("again"),
+            None,
+            false,
+        )
+        .unwrap();
+        assert!(
+            omissions.iter().any(|omission| omission.reason
+                == format!("hint: sequence output is Rec.2100 {name}; FX documents carry no HDR delivery target, so use `tsrct export --hdr {}` to deliver it", name.to_lowercase())),
+            "{omissions:?}"
+        );
+        assert!(
+            !omissions
+                .iter()
+                .any(|omission| omission.reason.contains("HDR sequence target not admitted")),
+            "{omissions:?}"
+        );
+        let again = TesseractFile::open(first_project(&root.join("again"))).unwrap();
+        let mut expected = expected_layers();
+        expected[1].0 = HLG.to_owned();
+        assert_eq!(video_layers(&again), expected);
+        assert_eq!(
+            again.project_json().unwrap()["hdrGraphicsWhiteNits"],
+            json!(fx_conv::DEFAULT_GRAPHICS_WHITE_NITS)
+        );
+        let hlg = again
+            .metadata()
+            .assets
+            .keys()
+            .find(|id| asset_name(&again, id) == HLG)
+            .unwrap()
+            .clone();
+        let mut packaged = Vec::new();
+        std::io::Read::read_to_end(
+            &mut again.asset(&hlg).unwrap().open().unwrap(),
+            &mut packaged,
+        )
+        .unwrap();
+        assert_eq!(packaged, fs::read(fixture_path(HLG)).unwrap());
+    }
+}

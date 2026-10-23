@@ -609,6 +609,7 @@ fn pr4442_masked_precomposition_uses_proven_origin_for_canvas_and_mask_translati
         feather_track: None,
         opacity_track: None,
         expansion_track: None,
+        source_mask: None,
     };
     masks::translate(std::slice::from_mut(&mut mask), [-origin[0], -origin[1]]);
     assert_eq!(mask.path.commands[0].endpoint(), Some((0.0, 0.0)));

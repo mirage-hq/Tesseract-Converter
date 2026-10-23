@@ -299,6 +299,24 @@ fn native_effect_mask_retains_scope_numeric_edits_and_source_clock() {
     );
     assert!(reason.contains("coverage-changing effects"), "{reason}");
 
+    // Every effect that the Lumetri writer carries has no masked form: it is
+    // reported before writing, not failed by the writer.
+    for effect in [
+        json!({"type": "primaryGrade", "semanticVersion": 1, "temperature": 0.0, "tint": 0.0,
+            "exposure": 0.2, "contrast": 0.0, "highlights": 0.0, "shadows": 0.0, "whites": 0.0,
+            "blacks": 0.0, "saturation": 0.0, "vibrance": 0.0}),
+        json!({"type": "hueCurves", "semanticVersion": 1,
+            "hueVsSaturation": [{"x": 0.0, "y": 0.5}, {"x": 0.3, "y": 0.2}, {"x": 0.6, "y": 0.5}, {"x": 1.0, "y": 0.5}]}),
+    ] {
+        let mut lumetri = wire.clone();
+        scope(&mut lumetri)["layers"][0]["effects"][0]["effect"] = effect;
+        let reason = convert_with_omissions(lumetri).unwrap_err().to_string();
+        assert!(
+            reason.contains("a masked Lumetri Color has no established native written form"),
+            "{reason}"
+        );
+    }
+
     // A partial adjustment trim must omit the entire picture, not export a
     // generic nest that quietly drops the adjustment mask.
     scope(&mut wire)["layers"][0]["activeRange"]["duration"] = json!(1000);

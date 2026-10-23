@@ -108,12 +108,10 @@ pub(super) fn validate(layer: &SolidLayerSpec) -> Result<(), AepWriteError> {
     if layer.width == 0 || layer.height == 0 {
         return Err(AepWriteError::Invalid("zero solid dimension"));
     }
-    if layer
-        .color
-        .iter()
-        .any(|v| !v.is_finite() || !(0.0..=1.0).contains(v))
-    {
-        return Err(AepWriteError::Invalid("solid color is outside 0..=1"));
+    if !super::paint_color_is_valid(&layer.color.map(f64::from)) {
+        return Err(AepWriteError::Invalid(
+            "solid color is not finite nonnegative RGB",
+        ));
     }
     let transform = &layer.transform;
     if transform

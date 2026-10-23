@@ -42,21 +42,46 @@ const C1: f64 = 3424.0 / 4096.0;
 const C2: f64 = 2413.0 / 128.0;
 const C3: f64 = 2392.0 / 128.0;
 
+/// Re-encoding the peak code 1.0 lands within this of the normalized peak:
+/// floating-point roundoff for PQ, and for HLG also the published 8-digit
+/// constants, which decode code 1.0 to 1 + 2.4e-8.
+const PEAK_TOLERANCE: f64 = 1e-7;
+
+/// FX graphics white in cd/m² when a document omits `hdrGraphicsWhiteNits`.
+pub const DEFAULT_GRAPHICS_WHITE_NITS: f64 = 609.0;
+
 /// Converter-local colour context. Missing FX graphics white means 609, not 203.
 #[derive(Debug, Clone, Copy)]
 pub struct HdrColorBridge {
     transfer: HdrTransfer,
     white: f64,
+    super_white: bool,
 }
 
 impl HdrColorBridge {
     /// Validate the current FX graphics-white range without modifying FX data.
     pub fn new(transfer: HdrTransfer, white: Option<f64>) -> Result<Self, HdrColorError> {
-        let white = white.unwrap_or(609.0);
+        let white = white.unwrap_or(DEFAULT_GRAPHICS_WHITE_NITS);
         if !white.is_finite() || !(100.0..=1000.0).contains(&white) {
             return Err(HdrColorError::GraphicsWhite);
         }
-        Ok(Self { transfer, white })
+        Ok(Self {
+            transfer,
+            white,
+            super_white: false,
+        })
+    }
+
+    /// Admit native code values above 1.0, which a float (AE 32 bpc) working
+    /// space keeps as super-white. The transfer curve ends at its peak code
+    /// 1.0 (PQ's inverse is undefined just above it), so beyond the peak the
+    /// mapping continues linearly: native code `c > 1` is normalized light `c`
+    /// times the peak. Both directions use it, so such codes round-trip.
+    pub fn with_super_white_headroom(self) -> Self {
+        Self {
+            super_white: true,
+            ..self
+        }
     }
 
     /// Convert one nonnegative extended-sRGB colour; coverage alpha is unchanged.
@@ -70,6 +95,16 @@ impl HdrColorBridge {
                 HdrTransfer::Pq => value * self.white / 10000.0,
                 HdrTransfer::Hlg => value * self.white / (203.0 * HLG_WHITE_SCALE),
             };
+            // A colour decoded from the peak code 1.0 is the peak, not an excess.
+            let normalized = if normalized > 1.0 && normalized - 1.0 <= PEAK_TOLERANCE {
+                1.0
+            } else {
+                normalized
+            };
+            if self.super_white && normalized.is_finite() && normalized > 1.0 {
+                *out = normalized;
+                continue;
+            }
             if !normalized.is_finite() || !(0.0..=1.0).contains(&normalized) {
                 return Err(HdrColorError::Domain(
                     "FX colour exceeds the nominal native HDR transfer domain",
@@ -130,12 +165,17 @@ impl HdrColorBridge {
 
     fn native_linear(self, color: [f64; 4]) -> Result<[f64; 3], HdrColorError> {
         validate(color)?;
-        if color[..3].iter().any(|v| *v > 1.0) {
+        if !self.super_white && color[..3].iter().any(|v| *v > 1.0) {
             return Err(HdrColorError::Domain(
                 "Native HDR colour exceeds the nominal transfer domain",
             ));
         }
+        let peak = match self.transfer {
+            HdrTransfer::Pq => 10000.0 / self.white,
+            HdrTransfer::Hlg => 203.0 * HLG_WHITE_SCALE / self.white,
+        };
         let rgb = [color[0], color[1], color[2]].map(|v| match self.transfer {
+            _ if v > 1.0 => v * peak,
             HdrTransfer::Pq => {
                 let p = v.powf(1.0 / M2);
                 ((p - C1).max(0.0) / (C2 - C3 * p)).powf(1.0 / M1) * 10000.0 / self.white
@@ -221,6 +261,45 @@ mod tests {
             let result = bridge.to_native([1.0, 1.0, 1.0, 0.25]).unwrap();
             assert!((result[0] - signal).abs() < 1e-10);
             assert_eq!(result[3], 0.25);
+        }
+    }
+
+    #[test]
+    fn super_white_codes_round_trip_only_with_headroom_admitted() {
+        for transfer in [HdrTransfer::Pq, HdrTransfer::Hlg] {
+            let bounded = HdrColorBridge::new(transfer, Some(100.0)).unwrap();
+            assert!(bounded.to_fx([2.0, 2.0, 2.0, 1.0]).is_err());
+            let bridge = bounded.with_super_white_headroom();
+            let peak = bridge.to_fx([1.0, 1.0, 1.0, 1.0]).unwrap();
+            let fx = bridge.to_fx([2.0, 2.0, 2.0, 1.0]).unwrap();
+            assert!(fx[0] > peak[0], "{fx:?} {peak:?}");
+            // FX beyond the peak is rejected by the bounded export mapping.
+            assert!(bounded.to_native(fx).is_err());
+            let native = bridge.to_native(fx).unwrap();
+            assert!(
+                native[..3].iter().all(|v| (v - 2.0).abs() < 1e-9),
+                "{native:?}"
+            );
+            let mixed = bridge.to_fx([1.2, 1.0, 0.95, 1.0]).unwrap();
+            let native = bridge.to_native(mixed).unwrap();
+            for (value, expected) in native.iter().zip([1.2, 1.0, 0.95, 1.0]) {
+                assert!((value - expected).abs() < 1e-7, "{native:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn peak_code_round_trips_through_fx_at_every_white() {
+        for transfer in [HdrTransfer::Pq, HdrTransfer::Hlg] {
+            for white in [100.0, 203.0, 1000.0] {
+                let bridge = HdrColorBridge::new(transfer, Some(white)).unwrap();
+                let fx = bridge.to_fx([1.0, 1.0, 1.0, 1.0]).unwrap();
+                let native = bridge.to_native(fx).unwrap();
+                assert!(
+                    native[..3].iter().all(|v| (v - 1.0).abs() < 1e-8),
+                    "{native:?}"
+                );
+            }
         }
     }
 

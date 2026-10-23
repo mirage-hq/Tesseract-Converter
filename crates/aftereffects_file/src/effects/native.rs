@@ -25,6 +25,38 @@ pub(crate) struct DecodedEffect {
     /// This instance's own `parT` declaration table.
     pub declarations: Declarations,
     pub parameters: Vec<DecodedParameter>,
+    /// Explicit `ADBE Effect Built In Params`, or why they cannot be read.
+    pub compositing: Result<super::compositing::NativeCompositing, String>,
+    /// Explicit arbitrary-data controls (`aRbs` leaves) in saved order; read
+    /// only for effects whose payloads a lowering interprets (Lumetri Color).
+    pub arbitrary: Vec<ArbitraryControl>,
+}
+
+/// One explicit arbitrary-data control and its static payload, or why the
+/// payload is not usable (keyed, expression-driven or malformed).
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct ArbitraryControl {
+    pub match_name: String,
+    pub payload: Result<Vec<u8>, PropertyError>,
+}
+
+/// Effects whose arbitrary-data payloads are decoded into [`ArbitraryControl`]s.
+const ARBITRARY_DATA_EFFECTS: [&str; 1] = [super::color_grades::LUMETRI];
+
+/// The static payload of one explicit arbitrary-data control run.
+fn arbitrary_payload(run: &[Chunk]) -> Result<Vec<u8>, PropertyError> {
+    let leaf = properties::unique_list(run, *b"tdbs")?;
+    let metadata = properties::read_path_metadata(leaf)?;
+    if metadata.animated || metadata.expression_present || !metadata.keyframes.is_empty() {
+        return Err(PropertyError::Layout(
+            "animated/expression arbitrary data unsupported",
+        ));
+    }
+    let records = properties::unique_list(run, *b"aRbs")?;
+    if records.len() != 1 {
+        return Err(PropertyError::Layout("ambiguous arbitrary-data records"));
+    }
+    properties::data(records, *b"aRbp").map(<[u8]>::to_vec)
 }
 
 /// The state of an instance's own `sspc/parT` declaration table. Controls
@@ -46,6 +78,8 @@ pub(crate) struct DecodedParameter {
     /// `Ok(None)` without one. An error means the control is declared more
     /// than once or its `pard` is missing, duplicated or malformed.
     pub declared_kind: Result<Option<u32>, PropertyError>,
+    /// UI label of this instance's own well-formed `pard`, if declared.
+    pub declared_label: Option<String>,
     pub numeric: Result<NumericProperty, PropertyError>,
     /// No explicit record exists and the instance's one declaration is a
     /// type-12 mask path whose default payload is all zero: no path is
@@ -232,6 +266,7 @@ pub(crate) fn read_effects(content: &[Chunk], size: [f64; 2]) -> (Vec<DecodedEff
                     return DecodedParameter {
                         match_name: name.to_owned(),
                         declared_kind,
+                        declared_label: local.and_then(declaration_label),
                         numeric: Ok(numeric),
                         unset_path: false,
                     };
@@ -310,25 +345,51 @@ pub(crate) fn read_effects(content: &[Chunk], size: [f64; 2]) -> (Vec<DecodedEff
                 {
                     round_integer_values(numeric);
                 }
+                // Arbitrary data that a lowering decodes ([`ArbitraryControl`])
+                // is not a number.
+                let decoded_arbitrary = ARBITRARY_DATA_EFFECTS.contains(&match_name)
+                    && explicit_run.is_some_and(|run| {
+                        run.iter().any(|chunk| chunk.list_kind() == Some(*b"aRbs"))
+                    });
                 if let Err(error) = &numeric
                     && !unset_path
+                    && !decoded_arbitrary
                 {
                     warnings.push(format!("{match_name}/{name}: {error}"));
                 }
                 DecodedParameter {
                     match_name: name.to_owned(),
                     declared_kind,
+                    declared_label: local.and_then(declaration_label),
                     numeric,
                     unset_path,
                 }
             })
             .collect();
+        let compositing = match explicit_by_name.get(super::compositing::MATCH_NAME) {
+            Some((_, count)) if *count > 1 => Err("duplicate Compositing Options groups".into()),
+            entry => super::compositing::read(entry.map(|(run, _)| *run)),
+        };
+        let arbitrary = if ARBITRARY_DATA_EFFECTS.contains(&match_name) {
+            explicit
+                .iter()
+                .filter(|(_, run)| run.iter().any(|chunk| chunk.list_kind() == Some(*b"aRbs")))
+                .map(|(name, run)| ArbitraryControl {
+                    match_name: (*name).to_owned(),
+                    payload: arbitrary_payload(run),
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
         effects.push(DecodedEffect {
             match_name: match_name.to_owned(),
             index: index + 1,
             enabled,
             declarations,
             parameters,
+            compositing,
+            arbitrary,
         });
     }
     (effects, warnings)
@@ -370,6 +431,17 @@ pub(crate) fn declaration_kind(definition: &[Chunk]) -> Result<u32, PropertyErro
     Ok(u32::from_be_bytes(
         bytes[12..16].try_into().expect("four-byte kind"),
     ))
+}
+
+/// The NUL-padded UTF-8 label at bytes 16..48 of a well-formed `pard`.
+fn declaration_label(definition: &[Chunk]) -> Option<String> {
+    let bytes = properties::data(definition, *b"pard").ok()?;
+    let label = bytes.get(16..48).filter(|_| bytes.len() == 148)?;
+    let end = label
+        .iter()
+        .position(|byte| *byte == 0)
+        .unwrap_or(label.len());
+    std::str::from_utf8(&label[..end]).ok().map(str::to_owned)
 }
 
 /// A `pard` type-12 (mask path) declaration whose whole default payload is

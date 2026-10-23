@@ -124,6 +124,8 @@ pub(super) fn read_adjustment_media(graph: &Graph<'_>, media: Located<Media>) ->
             width,
             height,
             kind: PrMediaKind::Adjustment,
+            input_lut: None,
+            camera_override: None,
         }),
         audio: None,
     })

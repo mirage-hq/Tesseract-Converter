@@ -745,7 +745,8 @@ fn a_matte_the_size_of_its_custom_canvas_is_full_frame_and_another_size_is_omitt
             [
                 PrMediaKind::Video {
                     codec: None,
-                    hdr_profile: None
+                    hdr_profile: None,
+                    color_space_override: None
                 },
                 PrMediaKind::ColorMatte(RED)
             ],
@@ -791,7 +792,8 @@ fn isolated_fixture_places_red_and_blue_mattes_and_keeps_only_the_empty_second_a
                     6,
                     PrMediaKind::Video {
                         codec: None,
-                        hdr_profile: None
+                        hdr_profile: None,
+                        color_space_override: None
                     }
                 ),
                 (7, 9, PrMediaKind::ColorMatte(BLUE))
@@ -1227,6 +1229,7 @@ fn a_track_matte_key_source_gets_no_head_dissolve_whether_its_keyed_clip_convert
             PrMediaKind::Video {
                 codec: None,
                 hdr_profile: None,
+                color_space_override: None,
             },
             true,
         ),

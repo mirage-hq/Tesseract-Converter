@@ -30,9 +30,15 @@ use super::{
 use crate::schema::{alpha_glow_size, ALPHA_GLOW, ALPHA_GLOW_APPROXIMATION, ALPHA_GLOW_SIZE};
 use crate::schema::{lens_curvature, LENS_APPROXIMATION, LENS_CURVATURE, LENS_DISTORTION};
 use crate::schema::{
+    lumetri_fx_value, lumetri_scaled_fx_value, PrLumetriGrade, LUMETRI,
+    LUMETRI_GRADE_APPROXIMATION, LUMETRI_GRADE_PARAMS, LUMETRI_GRADE_RANGES, LUMETRI_SATURATION,
+    LUMETRI_VIGNETTE_PARAMS,
+};
+use crate::schema::{
     normalize_legacy_luma, validate_legacy_luma, LEGACY_LUMA_CUTOFF, LEGACY_LUMA_KEY,
     LEGACY_LUMA_THRESHOLD,
 };
+use crate::schema::{PrProcAmp, PROC_AMP};
 use crate::{
     approximate,
     export_loss::{omit_field, ExportField, OmissionSink},
@@ -66,7 +72,8 @@ use fx_schema::{
     effect::ChannelSource,
     EffectData, EffectId, EffectPayload, EffectRecord, FXComposition, ImageSource, Layer,
     LayerData, LayerEffect, LayerId, MediaSourceKind, NonNegativeProperty, PositiveProperty,
-    PropType, PropertyTarget, PropertyValue, TimeOffset, Transform, VideoLayer,
+    PrimaryGrade, PrimaryGradeSemanticVersion, PropType, PropertyTarget, PropertyValue, TimeOffset,
+    Transform, VideoLayer,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -644,10 +651,9 @@ fn is_blur_length(param: &EffectParamSpec) -> bool {
 /// ([`EffectParamSpec::fx_value`]), and a Directional Blur parameter then maps
 /// through the clip's static similarity (see [`ClipToComposition`]).
 fn fx_value(param: &EffectParamSpec, value: f64, host: &ImportHost) -> Result<f64, String> {
-    if param == &crate::schema::LUMETRI_SATURATION {
-        return Ok(value - 100.0);
+    if param == &LUMETRI_SATURATION {
+        return Ok(lumetri_fx_value(param, value));
     }
-
     if *param == INVERT_BLEND {
         return Ok(invert_output_white(value));
     }
@@ -739,11 +745,17 @@ impl EffectHost<'_> {
 #[derive(Debug)]
 pub(super) struct EffectIdAllocator {
     next: u64,
+    /// Effects imported from a Lumetri Input LUT, which a media layer may
+    /// carry as its source `inputTransform` (`lumetri_lut::promote_input_lut`).
+    input_luts: BTreeSet<EffectId>,
 }
 
 impl Default for EffectIdAllocator {
     fn default() -> Self {
-        Self { next: 1 }
+        Self {
+            next: 1,
+            input_luts: BTreeSet::new(),
+        }
     }
 }
 
@@ -752,6 +764,11 @@ impl EffectIdAllocator {
         let id = EffectId::new(self.next);
         self.next += 1;
         id
+    }
+
+    /// Whether effect `id` was imported from a Lumetri Input LUT.
+    pub(super) fn is_input_lut(&self, id: EffectId) -> bool {
+        self.input_luts.contains(&id)
     }
 
     /// The id that [`Self::take`] returns next.
@@ -987,6 +1004,21 @@ pub(super) fn import_effects(
                 clip.record(),
                 omissions,
             )?;
+            if let (PrEffectParams::LumetriInputLut(_), EffectData::Identified { id, .. }) =
+                (&effect.params, imported.0.data())
+            {
+                ids.input_luts.insert(*id);
+            }
+            if let PrEffectParams::LumetriLook(look) = &effect.params {
+                if let Some(note) = super::lumetri_lut::look_clamp_note(look) {
+                    approximate(omissions, clip.record(), note);
+                }
+            }
+            if let PrEffectParams::LumetriLook(_) | PrEffectParams::LumetriInputLut(_) =
+                &effect.params
+            {
+                approximate(omissions, clip.record(), super::lumetri_lut::interpolation_note());
+            }
             if media_clock_keys && !animations.is_empty() {
                 approximate(omissions, clip.record(), format!(
                     "{} effect at stack position {position}: {RETIMED_EFFECT_CLOCK_APPROXIMATION}",
@@ -1221,6 +1253,30 @@ fn report_imported_effect(
             format!(
                 "{state}{} effect at stack position {position} converts approximately: {reason}",
                 effect.spec().display_name
+            ),
+        );
+    }
+    let lumetri_section = match effect.params {
+        PrEffectParams::LumetriCurves(_) => Some((
+            "RGB Curves",
+            aftereffects_file::lumetri::rgb_curves::LUMETRI_CURVES_APPROXIMATION,
+        )),
+        PrEffectParams::LumetriHueCurves(_) => Some((
+            "Hue Saturation Curves",
+            aftereffects_file::lumetri::hue_curves::HUE_CURVES_APPROXIMATION,
+        )),
+        PrEffectParams::LumetriWheels(_) => Some((
+            "Color Wheels",
+            aftereffects_file::lumetri::wheels::LUMETRI_WHEELS_APPROXIMATION,
+        )),
+        _ => None,
+    };
+    if let Some((section, approximation)) = lumetri_section {
+        approximate(
+            omissions,
+            owner,
+            format!(
+                "{state}Lumetri Color {section} at stack position {position} convert approximately: {approximation}"
             ),
         );
     }
@@ -2015,19 +2071,29 @@ fn layer_effect(effect: &PrEffect, host: &ImportHost) -> Result<LayerEffect, Str
             mirror_edges: false,
             phase: 0.0,
         }),
-        PrEffectParams::LumetriVignette([amount, midpoint, feather]) => Ok(LayerEffect::Vignette {
-            amount: Some(-amount / 5.0),
-            radius: Some((midpoint / 100.0).max(0.001)),
-            feather: Some((feather / 100.0).max(0.001)),
-        }),
-        PrEffectParams::LumetriTemperature(temperature) => Ok(LayerEffect::TemperatureTint {
-            temperature: Some(temperature / 3.0),
-            tint: Some(0.0),
-        }),
-        PrEffectParams::LumetriTint(tint) => Ok(LayerEffect::TemperatureTint {
-            temperature: Some(0.0),
-            tint: Some(-tint / 3.0),
-        }),
+        PrEffectParams::LumetriVignette(values) => {
+            let [amount, radius, feather] = aftereffects_file::lumetri::vignette::to_fx(values);
+            Ok(LayerEffect::Vignette {
+                amount: Some(amount),
+                radius: Some(radius),
+                feather: Some(feather),
+            })
+        }
+        PrEffectParams::LumetriCurves(ref curves) => aftereffects_file::lumetri::rgb_curves::color_curves(curves),
+        PrEffectParams::LumetriWheels(ref wheels) => aftereffects_file::lumetri::wheels::color_curves(wheels),
+        PrEffectParams::LumetriHueCurves(ref curves) => {
+            aftereffects_file::lumetri::hue_curves::to_fx(curves).map(LayerEffect::HueCurves)
+        }
+        PrEffectParams::LumetriInputLut(ref lut) => super::lumetri_lut::input_lut_effect(lut),
+        PrEffectParams::LumetriLook(ref look) => super::lumetri_lut::look_effect(look),
+        PrEffectParams::LumetriGrade(PrLumetriGrade {
+            vignette: Some(_), ..
+        }) => Err("a Lumetri grade merged with its vignette is written only by export; the reader returns each section as its own effect".to_owned()),
+        PrEffectParams::LumetriGrade(grade) => {
+            PrimaryGrade::new(PrimaryGradeSemanticVersion::V1, grade.fx_controls())
+                .map(LayerEffect::PrimaryGrade)
+                .map_err(|error| error.to_string())
+        }
         PrEffectParams::DropShadow { color, opacity, direction, distance, softness } => {
             let [red, green, blue] = color.fx();
             Ok(LayerEffect::DropShadow(fx_schema::DropShadow {
@@ -2039,24 +2105,40 @@ fn layer_effect(effect: &PrEffect, host: &ImportHost) -> Result<LayerEffect, Str
                 blend_mode: fx_schema::BlendMode::Normal,
             }))
         }
-        PrEffectParams::ProcAmpBrightness(brightness) => Ok(LayerEffect::Exposure {
+        // ProcAmp at Hue 0 with Contrast equal to Saturation multiplies
+        // display RGB by Contrast/100 and adds Brightness/100 (measured).
+        PrEffectParams::ProcAmp(proc_amp) if proc_amp.is_exposure() => Ok(LayerEffect::Exposure {
+            exposure: Some((proc_amp.contrast / 100.0).log2()),
+            offset: Some(proc_amp.brightness / 100.0),
+            gamma_correction: Some(1.0),
+        }),
+        // Any other ProcAmp is an affine display-RGB transform (measured).
+        PrEffectParams::ProcAmp(proc_amp) => {
+            let [red, green, blue] = proc_amp.matrix().map(|[red, green, blue, constant]| {
+                fx_schema::color_tools::ChannelMixerRow {
+                    red,
+                    green,
+                    blue,
+                    constant,
+                }
+            });
+            let mixer = fx_schema::ChannelMixer {
+                semantic_version: 1,
+                red,
+                green,
+                blue,
+                monochrome: false,
+            };
+            serde_json::to_value(&mixer)
+                .and_then(serde_json::from_value)
+                .map(LayerEffect::ChannelMixer)
+                .map_err(|error| format!("ProcAmp has no FX channelMixer within its ranges: {error}"))
+        }
+        // Display codes raised to Gamma/10 (measured), FX gamma 10/Gamma.
+        PrEffectParams::GammaCorrection(gamma) => Ok(LayerEffect::Exposure {
             exposure: Some(0.0),
-            offset: Some(brightness / 100.0),
-            gamma_correction: Some(1.0),
-        }),
-        PrEffectParams::LumetriExposure(exposure) => Ok(LayerEffect::Exposure {
-            exposure: Some(crate::schema::LUMETRI_EXPOSURE.fx_value(exposure)),
             offset: Some(0.0),
-            gamma_correction: Some(1.0),
-        }),
-        PrEffectParams::LumetriSaturation(saturation) => Ok(LayerEffect::HueSaturation {
-            hue: 0.0,
-            saturation: saturation - 100.0,
-            lightness: 0.0,
-            colorize: false,
-            colorize_hue: 0.0,
-            colorize_saturation: 0.0,
-            colorize_lightness: 0.0,
+            gamma_correction: Some(10.0 / gamma),
         }),
         // The reader bounds radial geometry separately; host admission is shared.
         PrEffectParams::Ramp(ramp) => {
@@ -2316,9 +2398,175 @@ pub(super) fn video_effect_ids(
         .collect()
 }
 
+/// Whether `payload` exports as ProcAmp/Gamma Correction ([`proc_amp_chain`]),
+/// whose declared approximations are not routing losses.
+fn chain_is_retained(payload: &EffectPayload) -> bool {
+    matches!(
+        payload,
+        EffectPayload::Known(
+            LayerEffect::Exposure { .. }
+                | LayerEffect::HueSaturation { .. }
+                | LayerEffect::ChannelMixer(_)
+        )
+    )
+}
+
+/// The ProcAmp and Gamma Correction effects that write an FX `exposure` or
+/// `hueSaturation`, or why it has none; `None` for other effects. Only static
+/// values export (`keyed` reports keys).
+///
+/// - `exposure` (display RGB times `2^stops`, plus offset, then raised to
+///   `1/gamma`): ProcAmps with Contrast and Saturation `100 * 2^(stops/n)`
+///   (n = 1, or the stops rounded up when above one, as Contrast stops at
+///   200), the last with Brightness `100 * offset`, then a Gamma Correction
+///   of whole Gamma `10/gamma` when the gamma is not 1. Exact (Premiere
+///   26.5.2 renders) but for the Gamma rounding.
+/// - `hueSaturation` without Colorize: one ProcAmp with Hue, Saturation
+///   `100 + saturation` and Brightness `lightness` (exact) at Contrast 100;
+///   ProcAmp turns and scales BT.601 chroma rather than HSV hue and
+///   saturation (approximate).
+/// - `channelMixer` whose rows are a ProcAmp's affine transform (as a
+///   ProcAmp imports): that ProcAmp, exactly. Other mixers have no native
+///   Premiere equivalent (`None`, reported by [`export_effect`]).
+fn proc_amp_chain(
+    effect: &LayerEffect,
+    keyed: bool,
+    record: &str,
+    diagnostics: &mut dyn OmissionSink,
+) -> Option<Result<Vec<PrEffectParams>, String>> {
+    let declared = |diagnostics: &mut dyn OmissionSink, reason: String| {
+        diagnostics.emit(Omission {
+            scope: OmissionScope::Feature,
+            kind: crate::OmissionKind::Approximated,
+            record: record.to_owned(),
+            reason,
+        });
+    };
+    match *effect {
+        LayerEffect::Exposure {
+            exposure,
+            offset,
+            gamma_correction,
+        } => {
+            if keyed {
+                return Some(Err("animated exposure has no ProcAmp key mapping; only a static exposure exports, as ProcAmp and Gamma Correction".to_owned()));
+            }
+            let stops = exposure.unwrap_or(0.0);
+            let offset = offset.unwrap_or(0.0);
+            let gamma = gamma_correction.unwrap_or(1.0);
+            if !(stops.is_finite() && offset.is_finite() && gamma.is_finite() && gamma > 0.0) {
+                return Some(Err(
+                    "exposure stops, offset and gamma must be finite, gamma positive".to_owned(),
+                ));
+            }
+            if !(-1.0..=1.0).contains(&offset) {
+                return Some(Err(format!(
+                    "exposure offset {offset} lies beyond ProcAmp Brightness -100 to 100"
+                )));
+            }
+            if stops > 8.0 {
+                return Some(Err(format!("exposure {stops} stops needs more than eight ProcAmps (Contrast stops at 200, one stop)")));
+            }
+            let count = if stops > 1.0 {
+                stops.ceil() as usize
+            } else {
+                1
+            };
+            let gain = 100.0 * (stops / count as f64).exp2();
+            let mut chain: Vec<PrEffectParams> = (0..count)
+                .map(|index| {
+                    PrEffectParams::ProcAmp(PrProcAmp {
+                        brightness: if index + 1 == count {
+                            100.0 * offset
+                        } else {
+                            0.0
+                        },
+                        contrast: gain,
+                        hue: 0.0,
+                        saturation: gain,
+                    })
+                })
+                .collect();
+            let mut note = format!("effects: exposure exports as {count} native ProcAmp (Contrast and Saturation {gain:.4}, Brightness {:.4}): Premiere 26.5.2 renders ProcAmp at equal Contrast and Saturation and Hue 0 as this exact display-RGB gain and offset", 100.0 * offset);
+            if gamma != 1.0 {
+                let whole = (10.0 / gamma).round().clamp(1.0, 28.0);
+                chain.push(PrEffectParams::GammaCorrection(whole));
+                note.push_str(&format!(", then Gamma Correction {whole} (display codes raised to Gamma/10, measured): FX gamma {gamma} written as {}", 10.0 / whole));
+            }
+            declared(diagnostics, note);
+            Some(Ok(chain))
+        }
+        LayerEffect::HueSaturation {
+            hue,
+            saturation,
+            lightness,
+            colorize,
+            ..
+        } => {
+            if colorize {
+                return Some(Err(
+                    "hueSaturation Colorize has no ProcAmp equivalent".to_owned()
+                ));
+            }
+            if keyed {
+                return Some(Err("animated hueSaturation has no ProcAmp key mapping; only a static hueSaturation exports, as ProcAmp".to_owned()));
+            }
+            let proc_amp = PrProcAmp {
+                brightness: lightness,
+                contrast: 100.0,
+                hue,
+                saturation: 100.0 + saturation,
+            };
+            let ranges =
+                PROC_AMP.params[..4]
+                    .iter()
+                    .zip(proc_amp.values())
+                    .find(|(param, value)| {
+                        param
+                            .value_range()
+                            .is_none_or(|range| !range.contains(value))
+                    });
+            if let Some((param, value)) = ranges {
+                return Some(Err(format!(
+                    "hueSaturation maps to ProcAmp {} {value}, outside its saved range",
+                    param.label
+                )));
+            }
+            declared(
+                diagnostics,
+                format!(
+                    "effects: {}",
+                    crate::schema::PROC_AMP_HUE_SATURATION_APPROXIMATION
+                ),
+            );
+            Some(Ok(vec![PrEffectParams::ProcAmp(proc_amp)]))
+        }
+        LayerEffect::ChannelMixer(ref mixer) if !mixer.monochrome => {
+            let rows = [mixer.red, mixer.green, mixer.blue]
+                .map(|row| [row.red, row.green, row.blue, row.constant]);
+            let proc_amp = PrProcAmp::from_matrix(rows)?;
+            let in_range =
+                PROC_AMP.params[..4]
+                    .iter()
+                    .zip(proc_amp.values())
+                    .all(|(param, value)| {
+                        param
+                            .value_range()
+                            .is_some_and(|range| range.contains(&value))
+                    });
+            in_range.then(|| Ok(vec![PrEffectParams::ProcAmp(proc_amp)]))
+        }
+        _ => None,
+    }
+}
+
 /// Export a video layer's effect stack in its current order onto the clip
 /// `host`, which export places, recording each exported effect in `written`
 /// and reporting each exported Replicate or Posterize as an approximation.
+/// A `primaryGrade` directly followed by a `vignette`, neither with
+/// compositing options, shares one Lumetri Color
+/// ([`merge_lumetri_vignette`]), as Lumetri applies Basic and Creative
+/// before Vignette; so `[grade, vignette]` rereads as `[grade, vignette]`.
 pub(super) fn export_effects(
     effects: &[EffectRecord],
     dynamics: &AnimationGraph,
@@ -2327,17 +2575,22 @@ pub(super) fn export_effects(
     record: &str,
     omissions: &mut dyn OmissionSink,
 ) -> Vec<PrEffect> {
-    let mut exported = Vec::with_capacity(effects.len());
+    let mut exported: Vec<PrEffect> = Vec::with_capacity(effects.len());
+    // The index in `exported` of a Lumetri grade written from the previous FX
+    // effect without compositing options, which a vignette may join.
+    let mut open_lumetri_grade = None;
     for (position, effect) in (1..).zip(effects) {
+        let previous_grade = open_lumetri_grade.take();
         // A pre-v13 record has no id, so no animator targets it, and is enabled.
-        let (id, enabled, payload) = match effect.data() {
+        let (id, enabled, payload, plain) = match effect.data() {
             EffectData::Identified {
                 id,
                 enabled,
                 effect,
+                compositing_options,
                 ..
-            } => (Some(*id), *enabled, effect),
-            EffectData::Legacy(effect) => (None, true, effect),
+            } => (Some(*id), *enabled, effect, compositing_options.is_none()),
+            EffectData::Legacy(effect) => (None, true, effect, true),
         };
         let name = match id {
             Some(id) => format!("effect {}", id.value()),
@@ -2356,7 +2609,31 @@ pub(super) fn export_effects(
             )
         );
         let mut control_diagnostics = Vec::new();
-        let result = if enabled
+        let chain = match payload {
+            EffectPayload::Known(effect) => {
+                let keyed = dynamics.entries().iter().any(|entry| {
+                    entry
+                        .target
+                        .effect_id()
+                        .is_some_and(|effect| Some(effect) == id)
+                });
+                proc_amp_chain(effect, keyed, record, &mut control_diagnostics)
+            }
+            _ => None,
+        };
+        let result: Result<Vec<PrEffect>, String> = if let Some(chain) = chain {
+            chain.map(|params| {
+                params
+                    .into_iter()
+                    .map(|params| PrEffect {
+                        mask: None,
+                        enabled,
+                        params,
+                        animations: Vec::new(),
+                    })
+                    .collect()
+            })
+        } else if enabled
             && matches!(
                 payload,
                 EffectPayload::Known(LayerEffect::PosterizeTime { .. })
@@ -2374,9 +2651,12 @@ pub(super) fn export_effects(
                 record,
                 &mut control_diagnostics,
             )
+            .map(|effect| vec![effect])
         } else {
             export_effect(id, enabled, payload, dynamics, host, record, omissions)
+                .map(|effect| vec![effect])
         };
+        let retained_native = retained_native || chain_is_retained(payload);
         for diagnostic in control_diagnostics {
             if result.is_ok() {
                 omissions.emit_retained_native_effect(diagnostic);
@@ -2385,40 +2665,53 @@ pub(super) fn export_effects(
             }
         }
         match result {
-            Ok(effect) => {
+            Ok(effects) => {
                 if let Some(id) = id {
                     written.record_effect(id);
                 }
-                if let PrEffectParams::Replicate(_) = effect.params {
-                    approximate(
-                        omissions,
-                        record,
-                        format!(
+                for effect in effects {
+                    if plain {
+                        if let Some(grade) =
+                            previous_grade.and_then(|index| exported.get_mut(index))
+                        {
+                            if merge_lumetri_vignette(grade, &effect) {
+                                continue;
+                            }
+                        }
+                        if matches!(effect.params, PrEffectParams::LumetriGrade(_)) {
+                            open_lumetri_grade = Some(exported.len());
+                        }
+                    }
+                    if let PrEffectParams::Replicate(_) = effect.params {
+                        approximate(
+                            omissions,
+                            record,
+                            format!(
+                                "effects: {} {name} converts approximately: {}",
+                                effect_type(payload),
+                                PrReplicate::TILING_APPROXIMATION
+                            ),
+                        );
+                    }
+                    if let Some(reason) = effect_approximation(&effect.params) {
+                        let message = format!(
                             "effects: {} {name} converts approximately: {}",
                             effect_type(payload),
-                            PrReplicate::TILING_APPROXIMATION
-                        ),
-                    );
-                }
-                if let Some(reason) = effect_approximation(&effect.params) {
-                    let message = format!(
-                        "effects: {} {name} converts approximately: {}",
-                        effect_type(payload),
-                        reason
-                    );
-                    if retained_native {
-                        omissions.emit_retained_native_effect(Omission {
-                            scope: OmissionScope::Feature,
-                            kind: crate::OmissionKind::Approximated,
-                            record: record.to_owned(),
-                            reason: message,
-                        });
-                    } else {
-                        approximate(omissions, record, message);
+                            reason
+                        );
+                        if retained_native {
+                            omissions.emit_retained_native_effect(Omission {
+                                scope: OmissionScope::Feature,
+                                kind: crate::OmissionKind::Approximated,
+                                record: record.to_owned(),
+                                reason: message,
+                            });
+                        } else {
+                            approximate(omissions, record, message);
+                        }
                     }
-                }
-                if let PrEffectParams::FindEdges(_) = effect.params {
-                    approximate(
+                    if let PrEffectParams::FindEdges(_) = effect.params {
+                        approximate(
                         omissions,
                         record,
                         format!(
@@ -2426,8 +2719,9 @@ pub(super) fn export_effects(
                             PrFindEdges::APPROXIMATION
                         ),
                     );
+                    }
+                    exported.push(effect);
                 }
-                exported.push(effect);
             }
             Err(reason) => omit_unexported_effect(position, effect, &reason, record, omissions),
         }
@@ -2686,7 +2980,59 @@ fn export_effect(
             animations,
         });
     }
-    let spec = effect_spec(payload);
+    let equivalent = match payload {
+        EffectPayload::Known(effect) => lumetri_equivalent(effect),
+        _ => None,
+    };
+    if let Some(equivalent) = equivalent {
+        let LumetriEquivalent {
+            grade,
+            approximation,
+            lost,
+        } = equivalent?;
+        if dynamics.entries().iter().any(|entry| {
+            entry
+                .target
+                .effect_id()
+                .is_some_and(|effect| Some(effect) == id)
+        }) {
+            return Err(format!(
+                "animated {} has no Lumetri key mapping; only a static {0} exports, as Lumetri Color",
+                effect_type(payload)
+            ));
+        }
+        let grade = EffectPayload::Known(LayerEffect::PrimaryGrade(grade));
+        let exported = export_effect(None, enabled, &grade, dynamics, host, record, omissions)?;
+        // A declared, measured approximation like the Lumetri scales: not a
+        // routing loss. A lost offset/gamma below is.
+        retained_lumetri_approximation(omissions, record, approximation);
+        if let Some(lost) = lost {
+            omit_field(omissions, host.layer, ExportField::Effects, record, lost);
+        }
+        return Ok(exported);
+    }
+    let lumetri = matches!(
+        payload,
+        EffectPayload::Known(
+            LayerEffect::PrimaryGrade(_)
+                | LayerEffect::Vignette { .. }
+                | LayerEffect::ColorCurves { .. }
+                | LayerEffect::HueCurves(_)
+                | LayerEffect::TonalColor(_)
+        )
+    );
+    if lumetri && !NATIVE_LUMETRI_EXPORT {
+        return Err(NATIVE_LUMETRI_EXPORT_REASON.to_owned());
+    }
+    if matches!(
+        payload,
+        EffectPayload::Known(LayerEffect::ChannelMixer(_) | LayerEffect::SelectiveColor(_))
+    ) {
+        return Err(UNENCODED_COLOR_EFFECT_REASON.to_owned());
+    }
+    // Not `effect_spec`, which script baking also reads: Lumetri grade keys
+    // bind here, but expression-driven Lumetri controls are not baked.
+    let spec = effect_spec(payload).or(lumetri.then_some(&LUMETRI));
     let grain = matches!(payload, EffectPayload::Known(LayerEffect::Grain { .. }));
     let mut grain_strength_seen = false;
     let mut keyed = Vec::new();
@@ -2777,6 +3123,13 @@ fn export_effect(
             continue;
         }
         keyed.push((param, entry));
+    }
+    if let (true, EffectPayload::Known(effect)) = (lumetri, payload) {
+        return export_lumetri(enabled, effect, &keyed, host.source_in, record, omissions);
+    }
+    // A keyed mix has no bound parameter and was rejected above.
+    if let EffectPayload::Known(look @ LayerEffect::LookTransform { .. }) = payload {
+        return super::lumetri_lut::export_look(enabled, look, record, omissions);
     }
     if let EffectPayload::Known(levels @ LayerEffect::Levels { .. }) = payload {
         if let Some(form) = invert_form(levels, &keyed) {
@@ -3249,6 +3602,378 @@ fn export_effect(
         params,
         animations,
     })
+}
+
+/// Whether an FX `primaryGrade` or `vignette` exports as a native Lumetri
+/// Color ([`export_lumetri`]). On: a Premiere 26.5.2 probe showed that saved
+/// Lumetri scalars drive the render while the `Blob` stays the constant
+/// sentinel that the writer always emits, and Premiere 26.5.2 accepted a
+/// written single-grade component (readback equal to `color_lumetri_basic`,
+/// render identical to its native reference). The merged grade + vignette
+/// component and the exact-rate CLI route are not Adobe-checked. Turning this
+/// off sends these effects back to the linked After Effects route with
+/// [`NATIVE_LUMETRI_EXPORT_REASON`].
+const NATIVE_LUMETRI_EXPORT: bool = true;
+const NATIVE_LUMETRI_EXPORT_REASON: &str = "native Lumetri Color export is switched off, so this grade needs the linked After Effects route";
+
+/// A `primaryGrade` standing in for another FX colour effect on export.
+struct LumetriEquivalent {
+    grade: PrimaryGrade,
+    /// The declared approximation.
+    approximation: &'static str,
+    /// A part of the effect Lumetri cannot carry, reported lost.
+    lost: Option<String>,
+}
+
+/// FX shader-preset colour effects that Lumetri Color's Basic/Creative
+/// controls express, as the equivalent `primaryGrade` (then exported by its
+/// fitted Lumetri scales), the approximation to state and any lost part.
+///
+/// - `vibrance`: Vibrance and Saturation (−100..100) map to `primaryGrade`
+///   vibrance and saturation /100; FX applies vibrance first, `primaryGrade`
+///   saturation first.
+/// - `temperatureTint`: the shader adds ±0.12 code per 100 to red/blue
+///   (temperature) and green (tint, red/blue −0.06); `primaryGrade`'s
+///   multiplicative gains match that at mid grey with 0.62/100 per unit.
+fn lumetri_equivalent(effect: &LayerEffect) -> Option<Result<LumetriEquivalent, String>> {
+    let mut controls = [0.0; 10];
+    let (approximation, lost) = match *effect {
+        LayerEffect::Vibrance {
+            vibrance,
+            saturation,
+        } => {
+            controls[9] = vibrance.unwrap_or(25.0) / 100.0;
+            controls[8] = saturation.unwrap_or(0.0) / 100.0;
+            (
+                "effects: vibrance exports as native Lumetri Color Creative Vibrance and Basic Saturation (FX Vibrance/Saturation /100 as primaryGrade, then the fitted Lumetri scales; FX applies vibrance before saturation)",
+                None,
+            )
+        }
+        LayerEffect::TemperatureTint { temperature, tint } => {
+            controls[0] = 0.0062 * temperature.unwrap_or(0.0);
+            controls[1] = 0.0062 * tint.unwrap_or(0.0);
+            (
+                "effects: temperatureTint exports as native Lumetri Color Temperature/Tint (FX additive channel offsets matched at mid grey by primaryGrade gains, 0.62 per 100, then the fitted Lumetri scales); the white-balance transfers differ away from mid grey",
+                None,
+            )
+        }
+        _ => return None,
+    };
+    Some(
+        PrimaryGrade::new(PrimaryGradeSemanticVersion::V1, controls)
+            .map(|grade| LumetriEquivalent {
+                grade,
+                approximation,
+                lost,
+            })
+            .map_err(|error| format!("its values have no Lumetri Color equivalent ({error})")),
+    )
+}
+
+/// Why a canonical colour effect is not written natively: Premiere 26.5.2's
+/// video effects include no channel mixer or selective colour.
+const UNENCODED_COLOR_EFFECT_REASON: &str = "no native Premiere effect mixes channels by arbitrary weights or adjusts selective colour inks: Premiere 26.5.2's video-effect list has no Channel Mixer or Selective Color, its Channel Mix (Film Impact) selects one source per channel, and ProcAmp holds only a channelMixer of its own BT.601 luma/chroma form";
+
+/// FX vignette defaults for absent fields, as the renderer applies them.
+const FX_VIGNETTE_DEFAULTS: [f64; 3] = [0.5, 0.75, 0.35];
+
+/// The native Lumetri Color of an FX `primaryGrade` or `vignette`, by the
+/// inverse of the import scales. A grade's `keyed` controls keep their keys
+/// from `source_in`; FX grade controls whose saved image lies beyond
+/// [`LUMETRI_GRADE_RANGES`] (Exposure beyond ±7/2.6 FX stops, Contrast,
+/// Highlights and Shadows beyond ±150 saved) and vignette controls beyond the
+/// saved ranges clamp with a diagnostic. Import stores FX controls to 1e-9,
+/// which the largest scale (Shadows, ×510) turns into up to 2.6e-7 of saved
+/// error, so a grade control's saved value rounds to 1e-6 when that reimports
+/// to the same FX value (a saved Shadows 25 is written back as 25), else to
+/// 1e-8.
+fn export_lumetri(
+    enabled: bool,
+    effect: &LayerEffect,
+    keyed: &[(&'static EffectParamSpec, &AnimationGraphEntry)],
+    source_in: i64,
+    record: &str,
+    omissions: &mut dyn OmissionSink,
+) -> Result<PrEffect, String> {
+    let round = |value: f64| (value * 1e8).round() / 1e8;
+    // A grade control's saved value at 1e-6 when that reimports to the same
+    // FX value (so an imported Shadows 25, FX 0.049019608, is written back as
+    // 25, not 25.0000001), else at 1e-8.
+    let round_saved = |param: &EffectParamSpec, value: f64| {
+        let coarse = (value * 1e6).round() / 1e6;
+        if lumetri_fx_value(param, coarse) == lumetri_fx_value(param, value) {
+            coarse
+        } else {
+            round(value)
+        }
+    };
+    match effect {
+        LayerEffect::PrimaryGrade(grade) => {
+            // The unrounded FX images of the saved bounds, so that a clamped
+            // value scales back to the bound itself, not just past it.
+            let limits: [[f64; 2]; 10] = std::array::from_fn(|index| {
+                let param = LUMETRI_GRADE_PARAMS[index];
+                let multiplier = match param.binding {
+                    Some(EffectParamBinding::ScaledScalar { multiplier, .. }) => multiplier,
+                    _ => 1.0,
+                };
+                let [low, high] = LUMETRI_GRADE_RANGES[index]
+                    .map(|saved| saved * multiplier - lumetri_scaled_fx_value(param, 0.0));
+                [low.min(high), low.max(high)]
+            });
+            for (index, param) in LUMETRI_GRADE_PARAMS.into_iter().enumerate() {
+                let fx = [
+                    grade.temperature,
+                    grade.tint,
+                    grade.exposure,
+                    grade.contrast,
+                    grade.highlights,
+                    grade.shadows,
+                    grade.whites,
+                    grade.blacks,
+                    grade.saturation,
+                    grade.vibrance,
+                ][index];
+                let mut values = std::iter::once(fx).chain(
+                    keyed
+                        .iter()
+                        .filter(|(keyed, _)| keyed.id == param.id)
+                        .filter_map(|&(_, entry)| entry.animator.keyframe_track())
+                        .flat_map(|track| track.keyframes())
+                        .filter_map(|key| match key.value() {
+                            PropertyValue::Float(value) => Some(*value),
+                            _ => None,
+                        }),
+                );
+                let [low, high] = limits[index];
+                if values.any(|value| !(low..=high).contains(&value)) {
+                    let [saved_low, saved_high] = LUMETRI_GRADE_RANGES[index];
+                    approximate(
+                        omissions,
+                        record,
+                        format!(
+                            "effects: primaryGrade {} beyond {low} to {high} clamped: Lumetri saves {} from {saved_low} to {saved_high}",
+                            [
+                                "temperature",
+                                "tint",
+                                "exposure",
+                                "contrast",
+                                "highlights",
+                                "shadows",
+                                "whites",
+                                "blacks",
+                                "saturation",
+                                "vibrance",
+                            ][index],
+                            param.label
+                        ),
+                    );
+                }
+            }
+            let clip_value = |param: &EffectParamSpec, value: f64| {
+                let index = LUMETRI_GRADE_PARAMS
+                    .iter()
+                    .position(|grade_param| grade_param.id == param.id);
+                let value = index.map_or(value, |index| {
+                    value.clamp(limits[index][0], limits[index][1])
+                });
+                lumetri_scaled_fx_value(param, value)
+            };
+            let fx = [
+                grade.temperature,
+                grade.tint,
+                grade.exposure,
+                grade.contrast,
+                grade.highlights,
+                grade.shadows,
+                grade.whites,
+                grade.blacks,
+                grade.saturation,
+                grade.vibrance,
+            ];
+            let (values, mut animations) = export_scalar_params(
+                LUMETRI_GRADE_PARAMS,
+                fx,
+                keyed,
+                clip_value,
+                source_in,
+                record,
+                omissions,
+            )?;
+            for animation in &mut animations {
+                if let PrEffectParamKeys::Scalar(keys) = &mut animation.keys {
+                    for key in keys {
+                        key.value = round_saved(animation.param, key.value);
+                    }
+                }
+            }
+            let values: [f64; 10] = std::array::from_fn(|index| {
+                round_saved(LUMETRI_GRADE_PARAMS[index], values[index])
+            });
+            retained_lumetri_approximation(
+                omissions,
+                record,
+                format!("effects: primaryGrade exports as a native Lumetri Color: {LUMETRI_GRADE_APPROXIMATION}"),
+            );
+            Ok(PrEffect {
+                enabled,
+                mask: None,
+                params: PrEffectParams::LumetriGrade(PrLumetriGrade {
+                    values,
+                    vignette: None,
+                }),
+                animations,
+            })
+        }
+        LayerEffect::Vignette {
+            amount,
+            radius,
+            feather,
+        } => {
+            let fx = [*amount, *radius, *feather];
+            let [amount, radius, feather]: [f64; 3] =
+                std::array::from_fn(|index| fx[index].unwrap_or(FX_VIGNETTE_DEFAULTS[index]));
+            if !(amount.is_finite() && radius.is_finite() && feather.is_finite()) {
+                return Err("vignette amount, radius and feather must be finite".to_owned());
+            }
+            let mut values =
+                aftereffects_file::lumetri::vignette::from_fx([amount, radius, feather]).map(round);
+            for (value, param) in values.iter_mut().zip(LUMETRI_VIGNETTE_PARAMS) {
+                let Some(range) = param.value_range() else {
+                    continue;
+                };
+                if !value.is_finite() {
+                    return Err(format!("vignette {} is not finite", param.label));
+                }
+                if !range.contains(&*value) {
+                    let clamped = value.clamp(*range.start(), *range.end());
+                    approximate(
+                        omissions,
+                        record,
+                        format!(
+                            "effects: vignette {} {value} clamped to {clamped}, its saved Lumetri range",
+                            param.label
+                        ),
+                    );
+                    *value = clamped;
+                }
+            }
+            retained_lumetri_approximation(
+                omissions,
+                record,
+                format!(
+                    "effects: vignette exports as a native Lumetri Color Vignette (Roundness 0) by the inverse of the import mapping; {}",
+                    aftereffects_file::lumetri::vignette::VIGNETTE_APPROXIMATION
+                ),
+            );
+            Ok(PrEffect {
+                enabled,
+                mask: None,
+                params: PrEffectParams::LumetriVignette(values),
+                animations: Vec::new(),
+            })
+        }
+        LayerEffect::ColorCurves { curves, .. } => {
+            let (curves, message) = aftereffects_file::lumetri::rgb_curves::lumetri_curves(curves);
+            retained_lumetri_approximation(
+                omissions,
+                record,
+                format!("effects: colorCurves {message}"),
+            );
+            Ok(PrEffect {
+                enabled,
+                mask: None,
+                params: PrEffectParams::LumetriCurves(curves),
+                animations: Vec::new(),
+            })
+        }
+        LayerEffect::HueCurves(curves) => {
+            retained_lumetri_approximation(
+                omissions,
+                record,
+                format!(
+                    "effects: hueCurves exports as native Lumetri Color Hue Saturation Curves: {}",
+                    aftereffects_file::lumetri::hue_curves::HUE_CURVES_APPROXIMATION
+                ),
+            );
+            Ok(PrEffect {
+                enabled,
+                mask: None,
+                params: PrEffectParams::LumetriHueCurves(
+                    aftereffects_file::lumetri::hue_curves::from_fx(curves),
+                ),
+                animations: Vec::new(),
+            })
+        }
+        LayerEffect::TonalColor(tonal) => {
+            let (wheels, [mean, largest]) =
+                aftereffects_file::lumetri::wheels::from_tonal_color(tonal).map_err(|reason| {
+                    format!("tonalColor has no Lumetri Color Wheels equivalent: {reason}")
+                })?;
+            retained_lumetri_approximation(
+                omissions,
+                record,
+                format!(
+                    "effects: {}; this effect's fitted deviation over the greys and colours is {mean:.1} mean, {largest:.1} largest 8-bit codes",
+                    aftereffects_file::lumetri::wheels::TONAL_COLOR_WHEELS_APPROXIMATION
+                ),
+            );
+            Ok(PrEffect {
+                enabled,
+                mask: None,
+                params: PrEffectParams::LumetriWheels(wheels),
+                animations: Vec::new(),
+            })
+        }
+        _ => Err(
+            "only a primaryGrade, vignette, colorCurves, hueCurves or tonalColor exports as a Lumetri Color"
+                .to_owned(),
+        ),
+    }
+}
+
+/// Reports the declared mapping approximation of a written Lumetri Color.
+/// It is not a routing loss ([`OmissionSink::emit_retained_native_effect`]):
+/// the linked After Effects route writes the same Lumetri controls by the
+/// same scales (the pinned `color_ae_lumetri_basic` and `color_lumetri_basic`
+/// renders of the same scalars differ by MAD 0.32/255), so moving the picture there would lose the native Premiere grade and gain
+/// no fidelity. The written RGB Curves' spline deviation and Master fold
+/// (`aftereffects_file::lumetri::rgb_curves::lumetri_curves`) are reported the same way, so edited
+/// curves stay native Lumetri curves at every sequence rate. Clamps, key and
+/// clock losses still use ordinary reporting.
+pub(super) fn retained_lumetri_approximation(
+    omissions: &mut dyn OmissionSink,
+    record: &str,
+    reason: impl Into<String>,
+) {
+    omissions.emit_retained_native_effect(Omission {
+        scope: OmissionScope::Feature,
+        kind: crate::OmissionKind::Approximated,
+        record: record.to_owned(),
+        reason: reason.into(),
+    });
+}
+
+/// A grade that `exported` holds at `grade`, written from the FX effect
+/// directly before `vignette`, absorbs that vignette into the same Lumetri
+/// Color when both are unmasked, share their enabled state and the vignette
+/// is static. Returns whether it did.
+fn merge_lumetri_vignette(grade: &mut PrEffect, vignette: &PrEffect) -> bool {
+    let (PrEffectParams::LumetriGrade(grade_params), PrEffectParams::LumetriVignette(values)) =
+        (&mut grade.params, &vignette.params)
+    else {
+        return false;
+    };
+    if grade_params.vignette.is_some()
+        || grade.enabled != vignette.enabled
+        || grade.mask.is_some()
+        || vignette.mask.is_some()
+        || !vignette.animations.is_empty()
+    {
+        return false;
+    }
+    grade_params.vignette = Some(*values);
+    true
 }
 
 /// A Corner Pin with the FX `corners` in native order and its keyed corners.

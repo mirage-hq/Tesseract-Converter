@@ -9,26 +9,50 @@ use crate::format::{
 };
 use crate::schema::{
     chain_render_order, native::*, records, ColorSpace, PrMedia, PrSequence, PrVideoOccurrence,
-    ToneMapSettings,
+    SequenceAces, SequenceHdr, ToneMapSettings,
 };
 
 pub(in crate::format::writer) fn group_record(spec: &PrSequence, ids: &SequenceGraphIds) -> Record {
-    let output_color = serde_json::to_string(
-        &spec
-            .hdr
-            .map_or_else(ColorSpace::sequence_sdr, ColorSpace::sequence_hdr),
-    )
-    .expect("native sequence color fields serialize");
+    // An ACEScct sequence saves no OutputColorSpace for its default Rec.709
+    // output (`color_aces_pr_sequence.prproj`); a Rec.2100 output keeps the
+    // generated HDR output profile.
+    let output_color = match (spec.aces, spec.hdr) {
+        (Some(_), None) => None,
+        (_, hdr) => Some(
+            serde_json::to_string(
+                &hdr.map_or_else(ColorSpace::sequence_sdr, ColorSpace::sequence_hdr),
+            )
+            .expect("native sequence color fields serialize"),
+        ),
+    };
     let color_management = spec
         .hdr
         .map(|settings| {
             serde_json::json!({
                 "autoToneMapEnabled":true,"enableLogColorManagement":2,
-                "graphicsWhiteLuminance":settings.graphics_white,"lutInterpolationMethod":1
+                "graphicsWhiteLuminance":SequenceHdr::native_graphics_white(settings.graphics_white),
+                "lutInterpolationMethod":1
             })
             .to_string()
         })
-        .unwrap_or_else(|| records::COLOR_MANAGEMENT_SETTINGS.into());
+        .unwrap_or_else(|| {
+            if spec.aces.is_some() {
+                records::COLOR_MANAGEMENT_SETTINGS_26_5.into()
+            } else {
+                records::COLOR_MANAGEMENT_SETTINGS.into()
+            }
+        });
+    let (working_color_space, working_space_id) = match (spec.aces, spec.hdr) {
+        (Some(_), _) => (
+            Some(SequenceAces::working_color_space()),
+            Some(SequenceAces::WORKING_NAME),
+        ),
+        (None, Some(settings)) => (
+            Some(ColorSpace::working_hdr(settings)),
+            Some(settings.working_name()),
+        ),
+        (None, None) => (None, None),
+    };
     Record::VideoTrackGroup(VideoTrackGroup {
         object_id: ids.sequence.video_group,
         class_id: Some(records::VIDEO_TRACK_GROUP.class_id.into()),
@@ -41,17 +65,27 @@ pub(in crate::format::writer) fn group_record(spec: &PrSequence, ids: &SequenceG
         }),
         color_management_settings: Some(color_management),
         immersive_video_vr_configuration: Some(records::IMMERSIVE_VIDEO_VR_CONFIGURATION.into()),
-        output_color_space: Some(output_color),
-        working_color_space: spec.hdr.map(|settings| serde_json::to_string(&ColorSpace::working_hdr(settings))
-            .expect("native working RGB profile serializes")),
-        working_color_space_configuration: spec.hdr.map(|settings| serde_json::json!({
-            "workingSpaceConfigVersion":1,"workingSpaceID":settings.working_name(),"workingSpaceIsLinearized":0
-        }).to_string()),
+        output_color_space: output_color,
+        working_color_space: working_color_space.map(|space| {
+            serde_json::to_string(&space).expect("native working RGB profile serializes")
+        }),
+        working_color_space_configuration: working_space_id.map(|id| {
+            serde_json::json!({
+                "workingSpaceConfigVersion":1,"workingSpaceID":id,"workingSpaceIsLinearized":0
+            })
+            .to_string()
+        }),
         // Legacy FX opacity blends display-space values, not linear light.
         allow_linear_compositing: Some("false".into()),
         tone_mapping_algorithm: spec.hdr.map(|_| "5".into()),
         gamut_compression_algorithm: spec.hdr.map(|_| "1".into()),
         auto_input_gamut_compression_enabled: Some("true".into()),
+        // Premiere 26.5.2 saves this on its Rec.2100 and ACEScct sequences
+        // (`color_hdr_pq_sequence.prproj`, `color_aces_pr_sequence.prproj`);
+        // SDR output stays unchanged.
+        tone_mapping_desaturation: (spec.hdr.is_some() || spec.aces.is_some())
+            .then(|| "0.5".into()),
+        tone_mapping_knee: None,
         is_graphics_white_same_as_project: Some("false".into()),
         is_color_aware_effects_enabled_same_as_project: Some("false".into()),
         frame_rect: Some(format!("0,0,{},{}", spec.width, spec.height)),

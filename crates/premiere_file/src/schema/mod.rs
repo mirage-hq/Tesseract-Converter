@@ -29,7 +29,11 @@ pub(crate) use audio::{
     AudioChannels, CustomFadeShape, PrAudioFade, PrAudioOccurrence, PrAudioSourceChannel,
     PrAudioStream, PrFadeCurve, PrVolumeKeys, PrVolumeLayout, RUNTIME_PITCH_RATES,
 };
-pub(crate) use color::{ColorSpace, HdrProfile, SequenceHdr, ToneMapSettings};
+pub(crate) use color::{
+    legacy_camera_override_reason, premiere_space_for_camera_encoding, ClipColorSpaceOverride,
+    ColorSpace, HdrProfile, PrCameraOverride, PrClipInputLut, SequenceAces, SequenceHdr,
+    ToneMapSettings,
+};
 pub(crate) use color_matte::PrColorMatte;
 pub(crate) use crop::{PrStaticCrop, CROP_PARAMS, CROP_PARAMS_26_5, CROP_PARAM_COUNT};
 pub(crate) use effects::{
@@ -56,22 +60,39 @@ pub(crate) use effects::{
     GAUSSIAN_BLUR_DIMENSIONS, GAUSSIAN_BLUR_MAX_BLURRINESS, GAUSSIAN_BLUR_REPEAT_EDGE_PIXELS,
     INVERT, INVERT_BLEND, INVERT_CHANNEL, INVERT_CHANNEL_RGB, LEGACY_LUMA_CUTOFF, LEGACY_LUMA_KEY,
     LEGACY_LUMA_KEY_MAPPING_REASON, LEGACY_LUMA_KEY_MATCH_NAME, LEGACY_LUMA_THRESHOLD, LEVELS,
-    LEVELS_NEUTRAL, LUMETRI_EXPOSURE, LUMETRI_SATURATION, LUMETRI_TEMPERATURE, LUMETRI_TINT,
-    LUMETRI_VIGNETTE_AMOUNT, LUMETRI_VIGNETTE_FEATHER, LUMETRI_VIGNETTE_MIDPOINT,
-    MASK_EFFECT_ORDER_REASON, MOSAIC, MOSAIC_HORIZONTAL_BLOCKS, MOSAIC_SHARP_COLORS,
-    MOSAIC_VERTICAL_BLOCKS, OFFSET, OFFSET_CENTER, PREMIERE_NATIVE_FILTER_VERSIONS,
-    PREMIERE_NATIVE_PARAMETER_ID, RAMP, RAMP_BLEND, RAMP_END, RAMP_END_COLOR, RAMP_SCATTER,
-    RAMP_SHAPE, RAMP_SHAPE_LINEAR, RAMP_START, RAMP_START_COLOR, TINT, TINT_AMOUNT,
-    TINT_MAP_BLACK_TO, TINT_MAP_WHITE_TO, TRACK_MATTE_KEY, TRACK_MATTE_KEY_COMPOSITE,
-    TRACK_MATTE_KEY_MATTE, TRACK_MATTE_KEY_REVERSE, TRANSFORM, TRANSFORM_ANCHOR_POINT,
-    TRANSFORM_COMPOSITION_SHUTTER_ANGLE, TRANSFORM_OPACITY, TRANSFORM_POSITION, TRANSFORM_ROTATION,
-    TRANSFORM_SAMPLING, TRANSFORM_SAMPLING_BICUBIC, TRANSFORM_SAMPLING_BILINEAR,
-    TRANSFORM_SCALE_HEIGHT, TRANSFORM_SCALE_WIDTH, TRANSFORM_SHUTTER_ANGLE, TRANSFORM_SKEW,
-    TRANSFORM_SKEW_AXIS, TRANSFORM_UNIFORM_SCALE,
+    LEVELS_NEUTRAL, MASK_EFFECT_ORDER_REASON, MOSAIC, MOSAIC_HORIZONTAL_BLOCKS,
+    MOSAIC_SHARP_COLORS, MOSAIC_VERTICAL_BLOCKS, OFFSET, OFFSET_CENTER,
+    PREMIERE_NATIVE_FILTER_VERSIONS, PREMIERE_NATIVE_PARAMETER_ID, RAMP, RAMP_BLEND, RAMP_END,
+    RAMP_END_COLOR, RAMP_SCATTER, RAMP_SHAPE, RAMP_SHAPE_LINEAR, RAMP_START, RAMP_START_COLOR,
+    TINT, TINT_AMOUNT, TINT_MAP_BLACK_TO, TINT_MAP_WHITE_TO, TRACK_MATTE_KEY,
+    TRACK_MATTE_KEY_COMPOSITE, TRACK_MATTE_KEY_MATTE, TRACK_MATTE_KEY_REVERSE, TRANSFORM,
+    TRANSFORM_ANCHOR_POINT, TRANSFORM_COMPOSITION_SHUTTER_ANGLE, TRANSFORM_OPACITY,
+    TRANSFORM_POSITION, TRANSFORM_ROTATION, TRANSFORM_SAMPLING, TRANSFORM_SAMPLING_BICUBIC,
+    TRANSFORM_SAMPLING_BILINEAR, TRANSFORM_SCALE_HEIGHT, TRANSFORM_SCALE_WIDTH,
+    TRANSFORM_SHUTTER_ANGLE, TRANSFORM_SKEW, TRANSFORM_SKEW_AXIS, TRANSFORM_UNIFORM_SCALE,
+};
+pub(crate) use effects::{
+    lumetri_default, lumetri_fx_value, lumetri_scaled_fx_value, LumetriDefault, PrLumetriGrade,
+    LUMETRI, LUMETRI_BASIC_ENABLE, LUMETRI_CREATIVE_ENABLE, LUMETRI_CREATIVE_SATURATION,
+    LUMETRI_DEFAULTS, LUMETRI_GRADE_APPROXIMATION, LUMETRI_GRADE_NEUTRAL, LUMETRI_GRADE_PARAMS,
+    LUMETRI_GRADE_RANGES, LUMETRI_GRADE_SATURATION, LUMETRI_MATCH_NAME, LUMETRI_PRIVATE_DATA,
+    LUMETRI_SATURATION, LUMETRI_VIBRANCE, LUMETRI_VIGNETTE_ENABLE, LUMETRI_VIGNETTE_PARAMS,
+};
+pub(crate) use effects::{
+    lumetri_param, EmbeddedLut, LumetriLutSlot, LutFile, PrLumetriLook, PrLumetriLut, ResolvedLut,
+    LUMETRI_INPUT_LUT_POPUP, LUMETRI_LOOK_COLOR_SPACE, LUMETRI_LOOK_COLOR_SPACE_REC709,
+    LUMETRI_LOOK_POPUP,
+};
+pub(crate) use effects::{
+    PrProcAmp, DROP_SHADOW, GAMMA_CORRECTION, GAMMA_CORRECTION_GAMMA, PROC_AMP,
+    PROC_AMP_HUE_SATURATION_APPROXIMATION,
 };
 pub(crate) use effects::{PrReplicate, REPLICATE, REPLICATE_COUNT};
 pub(crate) use effects::{PrSharpen, SHARPEN, SHARPEN_AMOUNT};
-pub(crate) use effects::{DROP_SHADOW, PROC_AMP, PROC_AMP_BRIGHTNESS};
+#[cfg(test)]
+pub(crate) use effects::{
+    LUMETRI_BLOB_SENTINEL, LUMETRI_PARAMS, LUMETRI_TEMPERATURE, LUMETRI_WHITES,
+};
 pub(crate) use effects::{
     MODERN_NOISE, NOISE, NOISE_AMOUNT, NOISE_APPROXIMATION, NOISE_CLIPPING, NOISE_COLOR,
 };
@@ -187,6 +208,10 @@ impl PrProjectFile {
 #[derive(Debug, Clone)]
 pub struct PrSequence {
     pub(crate) hdr: Option<SequenceHdr>,
+    /// An ACEScct working colour space: the native equal of an FX ACES
+    /// document. A nested sequence's own setting does not change its
+    /// enclosing document's colour management.
+    pub(crate) aces: Option<SequenceAces>,
     pub(crate) id: Option<String>,
     pub(crate) name: String,
     pub(crate) top_level: Option<bool>,
@@ -206,6 +231,12 @@ pub struct PrSequence {
     /// Native membership is adjustment-only, even if unsupported adjustments were omitted.
     /// Allows a positive-duration import canvas, never recovery of lost ordinary media.
     pub(crate) adjustment_only_template: bool,
+    /// Native membership is empty: a template drop zone (a sequence the user
+    /// fills later) that Premiere renders as nothing. Only such a sequence
+    /// may convert without occurrences; its placements keep their Motion,
+    /// Opacity and effects on an empty editable group. Never set for a
+    /// sequence whose occurrences failed to convert.
+    pub(crate) empty_template_placeholder: bool,
 }
 
 impl PrSequence {
@@ -587,6 +618,11 @@ pub(crate) struct PrVideoStream {
     pub(crate) width: u32,
     pub(crate) height: u32,
     pub(crate) kind: PrMediaKind,
+    /// The media's Interpret Footage Input LUT, which import maps to the
+    /// layer's `source.inputTransform` and export writes from it.
+    pub(crate) input_lut: Option<PrClipInputLut>,
+    /// The media's camera-log Color Space Override without an Input LUT.
+    pub(crate) camera_override: Option<PrCameraOverride>,
 }
 
 /// Saved picture declaration, never a measurement of the file's cadence.

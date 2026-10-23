@@ -18,6 +18,8 @@ use crate::{
 };
 use base64::{engine::general_purpose::STANDARD, Engine};
 
+mod lumetri;
+
 pub(super) const SOURCE: &str = include_str!("../../../tests/fixtures/one-clip.xml");
 const DEFAULT_CHAIN: &str = "<VideoComponentChain ObjectID=\"4\"><DefaultMotion>true</DefaultMotion><DefaultOpacity>true</DefaultOpacity><ComponentChain/></VideoComponentChain>";
 /// Chain flags of a clip whose Motion and Opacity are both default.
@@ -4721,6 +4723,7 @@ fn project(effects: Vec<PrEffect>) -> PrProjectFile {
     PrProjectFile::from_sequences(
         vec![PrSequence {
             hdr: None,
+            aces: None,
             native_frame_ticks: None,
             id: None,
             name: "Effect stack".into(),
@@ -4762,6 +4765,7 @@ fn project(effects: Vec<PrEffect>) -> PrProjectFile {
             height: 1080,
             timeline_end_ticks: 2 * TICKS,
             adjustment_only_template: false,
+            empty_template_placeholder: false,
         }],
         [(
             media,
@@ -4781,7 +4785,10 @@ fn project(effects: Vec<PrEffect>) -> PrProjectFile {
                     kind: crate::schema::PrMediaKind::Video {
                         codec: Some(crate::schema::VideoCodec::H264),
                         hdr_profile: None,
+                        color_space_override: None,
                     },
+                    input_lut: None,
+                    camera_override: None,
                 }),
                 audio: None,
             },
@@ -8125,4 +8132,53 @@ fn premiere_alpha_channel_is_retained_for_occurrence_lowering() {
             blend: 0.0
         })
     ));
+}
+
+#[test]
+fn written_proc_amp_and_gamma_correction_reread_exactly() {
+    use crate::schema::PrProcAmp;
+    let effects = vec![
+        PrEffect {
+            enabled: true,
+            mask: None,
+            params: PrEffectParams::ProcAmp(PrProcAmp {
+                brightness: 10.0,
+                contrast: 141.4213562,
+                hue: 0.0,
+                saturation: 141.4213562,
+            }),
+            animations: Vec::new(),
+        },
+        PrEffect {
+            enabled: true,
+            mask: None,
+            params: PrEffectParams::ProcAmp(PrProcAmp {
+                brightness: -5.0,
+                contrast: 100.0,
+                hue: 30.0,
+                saturation: 70.0,
+            }),
+            animations: Vec::new(),
+        },
+        PrEffect {
+            enabled: true,
+            mask: None,
+            params: PrEffectParams::GammaCorrection(5.0),
+            animations: Vec::new(),
+        },
+    ];
+    let xml = project_xml(&project(effects.clone())).unwrap();
+    // Gamma Correction saves its whole Gamma and repeats it in the private
+    // data, as Premiere 26.5.2 does (`CgA=` for 10).
+    assert!(xml.contains("<MatchName>PR.ADBE Gamma Correction</MatchName>"));
+    assert!(xml.contains(">BQA=<"), "Gamma 5 as private data");
+    let (project, omissions) = inspect_project_with_omissions(&xml, None).unwrap();
+    assert!(
+        omissions
+            .iter()
+            .all(|omission| omission.kind == OmissionKind::Approximated),
+        "{omissions:?}"
+    );
+    let reread = &project.sequences[0].video_tracks[0].clip(0).effects;
+    assert_eq!(reread, &effects);
 }

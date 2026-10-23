@@ -41,6 +41,29 @@ impl<'a> GeneratedHdrColorBinding<'a> {
         }
     }
 
+    /// Bind admitted native points into FX meaning whose 1.0 is `white` cd/m², the value of
+    /// the `hdrGraphicsWhiteNits` the caller writes on the same document, so
+    /// a native graphics-white point stays FX graphics white.
+    pub fn with_graphics_white(
+        transfer: crate::HdrTransfer,
+        white: f64,
+        diagnostics: &'a mut Vec<String>,
+    ) -> Result<Self, crate::HdrColorError> {
+        Ok(Self {
+            bridge: HdrColorBridge::new(transfer, Some(white))?,
+            diagnostics,
+            effects: BTreeMap::new(),
+            items: BTreeMap::new(),
+        })
+    }
+
+    /// Also admit native code values above 1.0 (float working-space
+    /// super-white); see [`HdrColorBridge::with_super_white_headroom`].
+    pub fn with_super_white_headroom(mut self) -> Self {
+        self.bridge = self.bridge.with_super_white_headroom();
+        self
+    }
+
     fn color(&mut self, value: &mut Value, scope: &str) -> bool {
         let Some(values) = value.as_array() else {
             return false;
@@ -55,6 +78,12 @@ impl<'a> GeneratedHdrColorBinding<'a> {
         };
         let mapped = match self.bridge.to_fx_gamut_mapped(color) {
             Ok((mapped, approximated)) => {
+                if color[..3].iter().any(|v| *v > 1.0) {
+                    self.diagnostics.push(format!(
+                        "{scope}: native super-white code values {:?} lie above the transfer's peak code 1.0, where the curve ends; imported as light continuing linearly past the peak (code c is c times the peak), which re-exports the same codes. FX renders above the peak are unmeasured",
+                        &color[..3]
+                    ));
+                }
                 if approximated {
                     self.diagnostics.push(format!(
                         "{scope}: native BT.2020 point outside nonnegative editable BT.709 gamut; chroma reduced toward the achromatic axis preserving linear BT.709 luminance and hue direction; above-white headroom and coverage retained, saturation fidelity approximated"
@@ -421,6 +450,41 @@ mod tests {
     use super::*;
     use crate::HdrTransfer;
     use serde_json::json;
+
+    #[test]
+    fn hdr_graphics_white_binding_decodes_native_white_to_fx_white() {
+        for transfer in [HdrTransfer::Pq, HdrTransfer::Hlg] {
+            let native = HdrColorBridge::new(transfer, Some(203.0))
+                .unwrap()
+                .to_native([1.0, 1.0, 1.0, 1.0])
+                .unwrap();
+            let mut diagnostics = Vec::new();
+            let mut binding =
+                GeneratedHdrColorBinding::with_graphics_white(transfer, 203.0, &mut diagnostics)
+                    .unwrap();
+            let mut layer =
+                json!({"type":"Rect","id":1,"name":"white","rect":{"fillColor":native}});
+            binding.layer(&mut layer);
+            let actual: [f64; 4] =
+                serde_json::from_value(layer["rect"]["fillColor"].clone()).unwrap();
+            for channel in actual {
+                assert!((channel - 1.0).abs() < 1e-10, "{actual:?}");
+            }
+            // The default 609 binding reads the same native point as dimmer than FX white.
+            let mut default =
+                json!({"type":"Rect","id":1,"name":"white","rect":{"fillColor":native}});
+            GeneratedHdrColorBinding::new(transfer, &mut Vec::new()).layer(&mut default);
+            assert!(default["rect"]["fillColor"][0].as_f64().unwrap() < 0.9);
+            for invalid in [99.0, 1001.0, f64::NAN] {
+                assert!(GeneratedHdrColorBinding::with_graphics_white(
+                    transfer,
+                    invalid,
+                    &mut Vec::new()
+                )
+                .is_err());
+            }
+        }
+    }
 
     #[test]
     fn hdr_effect_colour_keys_require_known_owner_and_field() {

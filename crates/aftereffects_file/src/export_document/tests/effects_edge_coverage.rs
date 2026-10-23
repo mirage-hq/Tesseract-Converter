@@ -210,12 +210,12 @@ fn static_only_affine_controls_keep_authored_bases_and_other_effects() {
 
 #[test]
 #[ignore = "Adobe-native proof backlog; see docs/after-effects-support.md"]
-fn animated_vignette_export_diagnoses_static_fallback_without_losing_siblings() {
+fn animated_vignette_exports_static_lumetri_without_losing_siblings() {
     let vignette = json!({"type":"vignette","amount":0.8,"radius":0.65,"feather":0.42});
     let static_result =
         super::super::effects::lower(&[record(7, true, vignette.clone())], &[], [320.0, 180.0]);
-    let static_amount = native_property(&static_result.effects[0], "CS Vignette-0001");
-    assert_eq!(static_amount.values, [80.0]);
+    let static_amount = native_property(&static_result.effects[0], "ADBE Lumetri-0051");
+    assert_eq!(static_amount.values, [-4.0]);
     assert!(static_amount.animation.is_none());
     assert!(
         static_result
@@ -237,24 +237,14 @@ fn animated_vignette_export_diagnoses_static_fallback_without_losing_siblings() 
         [320.0, 180.0],
     );
     assert_eq!(lowered.effects.len(), 2, "Vignette and sibling survive");
+    // The fitted Lumetri mapping is not affine: keys are not exported.
     for (param, control, base) in [
-        ("amount", "CS Vignette-0001", 80.0),
-        ("radius", "CS Vignette-0002", 39.0),
+        ("amount", "ADBE Lumetri-0051", -4.0),
+        ("radius", "ADBE Lumetri-0052", 65.0),
     ] {
         let native = native_property(&lowered.effects[0], control);
         assert_eq!(native.values, [base], "authored {param} base retained");
-        assert!(
-            native.animation.is_none(),
-            "{param} animation must not silently freeze"
-        );
-        assert!(
-            lowered.warnings.iter().any(|warning| {
-                warning.contains(&format!("Effect vignette / {param}"))
-                    && warning.contains("animation omitted, authored base retained")
-            }),
-            "missing contextual unsupported diagnostic for {param}: {:?}",
-            lowered.warnings
-        );
+        assert!(native.animation.is_none(), "{param} keys not exported");
     }
     assert!(
         native_property(&lowered.effects[1], "ADBE Gaussian Blur 2-0001")

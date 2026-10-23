@@ -1,3 +1,5 @@
+#[path = "effects/lumetri.rs"]
+mod lumetri;
 #[path = "effects/posterize_time.rs"]
 mod posterize_time;
 
@@ -169,7 +171,22 @@ fn export(wire: Value) -> (PrProjectFile, Vec<Omission>) {
 
 fn export_at(wire: Value, frame_rate: FrameRate) -> (PrProjectFile, Vec<Omission>) {
     let document = EditableFxCompositionDocument::from_json_value(wire).unwrap();
-    let facts = BTreeMap::from([(
+    let mut omissions = Vec::new();
+    let project = crate::convert::tesseract_to_premiere(
+        &document,
+        &source_facts(),
+        &BTreeMap::new(),
+        &BTreeMap::new(),
+        frame_rate,
+        &mut omissions,
+    )
+    .unwrap();
+    (project, omissions)
+}
+
+/// The facts of the one 10 s 1920x1080 30 fps source of [`document_with_effects`].
+fn source_facts() -> BTreeMap<String, MediaFacts> {
+    BTreeMap::from([(
         "premiere-video-1".to_owned(),
         MediaFacts::Video(VideoMedia {
             pixel_aspect: Default::default(),
@@ -184,18 +201,7 @@ fn export_at(wire: Value, frame_rate: FrameRate) -> (PrProjectFile, Vec<Omission
                 SOURCE_MILLIS / 1000 * TICKS,
             ),
         }),
-    )]);
-    let mut omissions = Vec::new();
-    let project = crate::convert::tesseract_to_premiere(
-        &document,
-        &facts,
-        &BTreeMap::new(),
-        &BTreeMap::new(),
-        frame_rate,
-        &mut omissions,
-    )
-    .unwrap();
-    (project, omissions)
+    )])
 }
 
 fn exported_effects(project: &PrProjectFile) -> Vec<PrEffect> {
@@ -1373,6 +1379,8 @@ fn effects_on_mattes_keep_supported_stack_and_keys() {
                 width: 1920,
                 height: 1080,
                 kind: PrMediaKind::ColorMatte(PrColorMatte { rgb: [255, 0, 0] }),
+                input_lut: None,
+                camera_override: None,
             }),
             audio: None,
         },
@@ -1494,6 +1502,8 @@ fn still_over_video(
                 width: 1920,
                 height: 1080,
                 kind: PrMediaKind::Still { alpha: false },
+                input_lut: None,
+                camera_override: None,
             }),
             audio: None,
         },
@@ -1804,7 +1814,7 @@ fn bypassed_effect_exports_as_bypassed() {
 fn unmapped_effects_are_reported_and_the_rest_keep_their_order() {
     let (project, omissions) = export(document_with_effects(json!([
         {"id": 1, "effect": {"type": "gaussianBlur", "blurriness": 10.0}},
-        {"id": 9, "effect": {"type": "vignette", "amount": 0.5}},
+        {"id": 9, "effect": {"type": "personMatte"}},
         {"id": 2, "effect": {"type": "gaussianBlur", "blurriness": 20.0}},
     ])));
     assert_eq!(
@@ -1821,7 +1831,7 @@ fn unmapped_effects_are_reported_and_the_rest_keep_their_order() {
             kind: OmissionKind::Omitted,
             record: "layer 1 (\"Source\")".to_owned(),
             reason:
-                "effects: vignette effect 9 was not exported: it has no Premiere effect mapping"
+                "effects: personMatte effect 9 was not exported: it has no Premiere effect mapping"
                     .to_owned(),
         }]
     );
@@ -6056,7 +6066,7 @@ fn legacy_effects_without_ids_export_as_enabled_effects() {
     let (project, omissions) = export(document_with_effects(json!([
         {"type": "gaussianBlur", "blurriness": 10.0},
         {"type": "posterize", "levels": 7.0},
-        {"type": "vignette", "amount": 0.5},
+        {"type": "personMatte"},
     ])));
     assert_eq!(
         exported_effects(&project),
@@ -6074,7 +6084,8 @@ fn legacy_effects_without_ids_export_as_enabled_effects() {
                 scope: OmissionScope::Feature,
                 kind: OmissionKind::Omitted,
                 record: "layer 1 (\"Source\")".to_owned(),
-                reason: "effects: vignette effect at stack position 3 was not exported: it has no Premiere effect mapping"
+                reason: "effects: personMatte effect at stack position 3 was not exported: \
+                         it has no Premiere effect mapping"
                     .to_owned(),
             }
         ]
@@ -8086,10 +8097,69 @@ fn proc_amp_brightness_imports_editable_offset_on_the_source_clock() {
 }
 
 #[test]
+fn proc_amp_imports_as_exposure_or_as_its_exact_channel_mixer() {
+    let set = |xml: &str, name: &str, value: &str| {
+        let at = xml.find(&format!("<Name>{name}</Name>")).unwrap();
+        let field =
+            at + xml[at..].find("-91445760000000000,").unwrap() + "-91445760000000000,".len();
+        let end = field + xml[field..].find(',').unwrap();
+        format!("{}{value}{}", &xml[..field], &xml[end..])
+    };
+    // Equal Contrast and Saturation at Hue 0: a display-RGB gain (measured).
+    let xml = set(
+        &set(
+            &set(&proc_amp_xml(""), "Contrast", "50"),
+            "Saturation",
+            "50",
+        ),
+        "Brightness",
+        "20",
+    );
+    let (wire, omissions) = find_edges_import(&xml);
+    let effect = &wire["composition"]["layers"][0]["effects"][0]["effect"];
+    assert_eq!(effect["type"], "exposure", "{omissions:?}");
+    assert_eq!(effect["exposure"], -1.0);
+    assert_eq!(effect["offset"], 0.2);
+    // Any other combination: the channelMixer of its BT.601 transform. At
+    // Saturation 0 every row is the BT.601 luma weights times the Contrast.
+    let xml = set(
+        &set(&proc_amp_xml(""), "Contrast", "120"),
+        "Saturation",
+        "0",
+    );
+    let (wire, omissions) = find_edges_import(&xml);
+    let effect = &wire["composition"]["layers"][0]["effects"][0]["effect"];
+    assert_eq!(effect["type"], "channelMixer", "{omissions:?}");
+    for row in ["red", "green", "blue"] {
+        for (input, weight) in [("red", 0.299), ("green", 0.587), ("blue", 0.114)] {
+            let value = effect[row][input].as_f64().unwrap();
+            assert!((value - 1.2 * weight).abs() < 1e-9, "{effect}");
+        }
+    }
+    assert!(
+        omissions
+            .iter()
+            .any(|note| note.reason.contains("channelMixer holds exactly")),
+        "{omissions:?}"
+    );
+    // A hue turn keeps the luma row sum: every row sums to Contrast/100.
+    let xml = set(&set(&proc_amp_xml(""), "Hue", "390"), "Saturation", "130");
+    let (wire, _) = find_edges_import(&xml);
+    let effect = &wire["composition"]["layers"][0]["effects"][0]["effect"];
+    assert_eq!(effect["type"], "channelMixer");
+    for row in ["red", "green", "blue"] {
+        let sum: f64 = ["red", "green", "blue"]
+            .iter()
+            .map(|input| effect[row][input].as_f64().unwrap())
+            .sum();
+        assert!((sum - 1.0).abs() < 1e-9, "{effect}");
+    }
+}
+
+#[test]
 fn proc_amp_unsupported_controls_omit_only_the_effect_and_bypass_survives() {
     let xml = proc_amp_xml("");
     for (from, to, reason) in [
-        ("00000000,100,", "00000000,125,", "nonneutral Contrast"),
         ("00000000,false,", "00000000,true,", "split view"),
         (
             "<Name>Contrast</Name>",
@@ -8116,246 +8186,6 @@ fn proc_amp_unsupported_controls_omit_only_the_effect_and_bypass_survives() {
     assert_eq!(
         wire["composition"]["layers"][0]["effects"][0]["enabled"],
         false
-    );
-}
-
-// Native human-inputs-20261004.prproj SHA-256
-// e74d088116570ddb7178b127129036755be2f8e553dea80f98aa59b601585b76,
-// effects sequence b3aecac7-c452-48ba-a5e1-737807cb32ee: component 557,
-// parameters 772–901 copied verbatim offline into one-clip.xml's synthetic host.
-// No claim of original placement fidelity or scalar authority over Lumetri blobs.
-#[test]
-fn human_lumetri_saved_contrast_replacement_imports_and_exports_edits() {
-    use sha2::{Digest, Sha256};
-    let xml = include_str!("../../../tests/fixtures/human_lumetri_contrast.xml");
-    assert_eq!(
-        format!("{:x}", Sha256::digest(xml.as_bytes())),
-        "4af7a4075c31e3735461074a18aeb436ff03ec7bfc85c9edd37be08907dac05c"
-    );
-    let (native, omissions) = crate::format::inspect_project_with_omissions(xml, None).unwrap();
-    let sequence = native.single_sequence().unwrap();
-    let effects = &sequence.video_tracks[0].clip(0).effects;
-    assert_eq!(effects.len(), 6, "{omissions:?}");
-    assert_eq!(
-        effects[1].params,
-        PrEffectParams::BrightnessContrast(PrBrightnessContrast {
-            brightness: 0.0,
-            contrast: 25.0
-        })
-    );
-    assert!(effects[0].animations.is_empty());
-    assert_eq!(omissions.len(), 1, "{omissions:?}");
-    assert_eq!(omissions[0].record, "VideoFilterComponent:557");
-    assert_eq!(omissions[0].kind, OmissionKind::Approximated);
-    assert!(omissions[0].reason.contains("saved Exposure"));
-    assert!(omissions[0].reason.contains("Exposure"));
-    assert!(omissions[0].reason.contains("LUT"));
-    assert!(omissions[0]
-        .reason
-        .contains("not an equivalent Lumetri transfer"));
-    let (mut wire, _) = imported_with_omissions(sequence, &native.media);
-    assert!(
-        (wire["composition"]["layers"][0]["effects"][0]["effect"]["exposure"]
-            .as_f64()
-            .unwrap()
-            - 1.0 / 2.2)
-            .abs()
-            < 1e-9
-    );
-    assert_eq!(
-        wire["composition"]["layers"][0]["effects"][2]["effect"]["saturation"],
-        30.0
-    );
-    let keys = wire["composition"]["dynamics"]["entries"][0]["animator"]["keyframes"]
-        .as_array()
-        .unwrap();
-    assert_eq!(keys.len(), 2);
-    assert_eq!(keys[0]["value"]["value"], 30.0);
-    assert_eq!(keys[1]["value"]["value"], -40.0);
-    assert_eq!(keys[0]["layerTime"], 0);
-    assert_eq!(keys[1]["layerTime"], 2513);
-    let effect = &mut wire["composition"]["layers"][0]["effects"][1]["effect"];
-    assert_eq!(effect["type"], "brightnessContrast");
-    assert_eq!(effect["contrast"], 25.0);
-    effect["contrast"] = json!(40.0);
-    effect["brightness"] = json!(15.0);
-    let (written, _) = export(wire.clone());
-    assert_eq!(
-        written_chain(export(wire).0),
-        ["AE.ADBE Brightness & Contrast 2"]
-    );
-    let effects = reread_effects(written);
-    assert_eq!(effects.len(), 1);
-    assert_eq!(
-        effects[0].params,
-        PrEffectParams::BrightnessContrast(PrBrightnessContrast {
-            brightness: 15.0,
-            contrast: 40.0
-        })
-    );
-}
-
-#[test]
-fn human_lumetri_replacement_rejects_ambiguous_or_unsupported_selected_controls() {
-    let xml = include_str!("../../../tests/fixtures/human_lumetri_contrast.xml");
-    let start = xml.find("<VideoComponentParam ObjectID=\"792\"").unwrap();
-    let end = start + xml[start..].find("</VideoComponentParam>").unwrap();
-    for (from, to, reason) in [
-        (
-            "25.,0,0,0,0,0,0",
-            "125.,0,0,0,0,0,0",
-            "outside replacement range",
-        ),
-        (
-            "<ParameterID>12</ParameterID>",
-            "<ParameterID>13</ParameterID>",
-            "duplicate Lumetri ParameterID",
-        ),
-        (
-            "<Name>Contrast</Name>",
-            "<Name>Different</Name>",
-            "unexpected Lumetri Contrast name",
-        ),
-        (
-            "<StartKeyframe>",
-            "<Keyframes>0,25,0,0,0,0,0,0;</Keyframes><StartKeyframe>",
-            "requires static",
-        ),
-    ] {
-        assert!(xml[start..end].contains(from));
-        let mut modified = format!(
-            "{}{}{}",
-            &xml[..start],
-            xml[start..end].replace(from, to),
-            &xml[end..]
-        );
-        if to.starts_with("125.") {
-            modified = modified.replace(
-                "<CurrentValue>25</CurrentValue>",
-                "<CurrentValue>125</CurrentValue>",
-            );
-        }
-        let (project, omissions) =
-            crate::format::inspect_project_with_omissions(&modified, None).unwrap();
-        let effects = &project.single_sequence().unwrap().video_tracks[0]
-            .clip(0)
-            .effects;
-        if reason == "duplicate Lumetri ParameterID" {
-            assert!(effects.is_empty());
-        } else {
-            assert_eq!(effects.len(), 5, "{omissions:?}");
-            assert_eq!(effects[0].params, PrEffectParams::LumetriExposure(1.0));
-            assert_eq!(effects[1].params, PrEffectParams::LumetriSaturation(130.0));
-            assert_eq!(effects[1].animations[0].keys.scalar().unwrap().len(), 2);
-            assert!(omissions
-                .iter()
-                .any(|omission| omission.record == "VideoFilterComponent:557"
-                    && omission.reason.contains("Contrast replacement omitted")));
-        }
-        assert!(
-            omissions
-                .iter()
-                .any(|omission| omission.reason.contains(reason)),
-            "{omissions:?}"
-        );
-    }
-}
-
-#[test]
-fn human_lumetri_exposure_projects_linear_stops_to_display_code_values() {
-    let source = include_str!("../../../tests/fixtures/human_lumetri_contrast.xml");
-    for stops in [-5.0_f64, -2.2, 0.0, 2.2, 5.0] {
-        let xml = source.replace(
-            "-91445760000000000,1.,",
-            &format!("-91445760000000000,{stops},"),
-        );
-        let (native, omissions) =
-            crate::format::inspect_project_with_omissions(&xml, None).unwrap();
-        assert_eq!(omissions.len(), 1, "{omissions:?}");
-        let (wire, losses) =
-            imported_with_omissions(native.single_sequence().unwrap(), &native.media);
-        assert!(losses.is_empty(), "{losses:?}");
-        let effects = wire["composition"]["layers"][0]["effects"]
-            .as_array()
-            .unwrap();
-        assert_eq!(effects.len(), 6);
-        let exposure = &effects[0]["effect"];
-        assert_eq!(exposure["type"], "exposure");
-        assert!((exposure["exposure"].as_f64().unwrap() - stops / 2.2).abs() < 1e-9);
-        assert_eq!(exposure["offset"], 0.0);
-        assert_eq!(exposure["gammaCorrection"], 1.0);
-    }
-    let start = source
-        .find("<VideoComponentParam ObjectID=\"791\"")
-        .unwrap();
-    let end = start + source[start..].find("</VideoComponentParam>").unwrap();
-    let keyed = format!(
-        "{}{}<IsTimeVarying>true</IsTimeVarying><Keyframes>0,-2.2,0,0,0,0,0,0;127008000000,2.2,0,0,0,0,0,0;</Keyframes>{}",
-        &source[..start], &source[start..end], &source[end..]
-    );
-    let (native, _) = crate::format::inspect_project_with_omissions(&keyed, None).unwrap();
-    let (wire, losses) = imported_with_omissions(native.single_sequence().unwrap(), &native.media);
-    assert!(losses.is_empty(), "{losses:?}");
-    let entries = wire["composition"]["dynamics"]["entries"]
-        .as_array()
-        .unwrap();
-    let exposure = entries
-        .iter()
-        .find(|entry| entry["target"]["paramName"] == "exposure")
-        .unwrap();
-    let keys = exposure["animator"]["keyframes"].as_array().unwrap();
-    assert_eq!(keys.len(), 2);
-    assert_eq!(keys[0]["value"]["value"], -1.0);
-    assert_eq!(keys[1]["value"]["value"], 1.0);
-    assert_eq!(keys[0]["layerTime"], 0);
-    assert_eq!(keys[1]["layerTime"], 500);
-}
-
-#[test]
-fn human_lumetri_basic_bypass_preserves_independent_vignette_enable() {
-    let xml = include_str!("../../../tests/fixtures/human_lumetri_contrast.xml");
-    let start = xml.find("<VideoComponentParam ObjectID=\"775\"").unwrap();
-    let end = start + xml[start..].find("</VideoComponentParam>").unwrap();
-    let control = xml[start..end]
-        .replace("-91445760000000000,true,", "-91445760000000000,false,")
-        .replace(
-            "<CurrentValue>true</CurrentValue>",
-            "<CurrentValue>false</CurrentValue>",
-        );
-    assert_ne!(control, xml[start..end]);
-    let xml = format!("{}{}{}", &xml[..start], control, &xml[end..]);
-    let (native, omissions) = crate::format::inspect_project_with_omissions(&xml, None).unwrap();
-    let effects = &native.single_sequence().unwrap().video_tracks[0]
-        .clip(0)
-        .effects;
-    assert_eq!(effects.len(), 6, "{omissions:?}");
-    assert!(effects[..5].iter().all(|effect| !effect.enabled));
-    assert!(effects[5].enabled);
-}
-
-#[test]
-fn human_lumetri_wrong_basic_enable_name_preserves_vignette() {
-    let xml = include_str!("../../../tests/fixtures/human_lumetri_contrast.xml");
-    let start = xml.find("<VideoComponentParam ObjectID=\"775\"").unwrap();
-    let end = start + xml[start..].find("</VideoComponentParam>").unwrap();
-    let control = xml[start..end].replace("<Name> </Name>", "<Name>Different</Name>");
-    assert_ne!(control, xml[start..end]);
-    let modified = format!("{}{}{}", &xml[..start], control, &xml[end..]);
-    let (project, omissions) =
-        crate::format::inspect_project_with_omissions(&modified, None).unwrap();
-    let effects = &project.single_sequence().unwrap().video_tracks[0]
-        .clip(0)
-        .effects;
-    assert_eq!(effects.len(), 1);
-    assert_eq!(
-        effects[0].params,
-        PrEffectParams::LumetriVignette([0.0, 50.0, 50.0])
-    );
-    assert!(
-        omissions.iter().any(|omission| omission
-            .reason
-            .contains("unexpected Lumetri Basic Correction enable name")),
-        "{omissions:?}"
     );
 }
 
@@ -8553,210 +8383,6 @@ fn replicate_still_import_omits_unverified_host_and_keeps_keyed_sibling() {
                 && note.reason.contains("still")),
         "{omissions:?}"
     );
-}
-
-#[test]
-fn human_lumetri_vignette_imports_independent_editable_radial_controls() {
-    let source = include_str!("../../../tests/fixtures/human_lumetri_contrast.xml");
-    for (amount, expected) in [("0.", 0.0), ("-2.5", 0.5), ("2.5", -0.5)] {
-        // Supplementary scalar edits of the pinned native records. The actual
-        // independently saved vignette is neutral; do not relabel edits native.
-        let start = source
-            .find("<VideoComponentParam ObjectID=\"882\"")
-            .unwrap();
-        let end = start + source[start..].find("</VideoComponentParam>").unwrap();
-        let xml = format!(
-            "{}{}{}",
-            &source[..start],
-            source[start..end].replace(
-                "-91445760000000000,0.,",
-                &format!("-91445760000000000,{amount},")
-            ),
-            &source[end..]
-        );
-        let (native, omissions) =
-            crate::format::inspect_project_with_omissions(&xml, None).unwrap();
-        assert_eq!(omissions.len(), 1, "{omissions:?}");
-        assert!(omissions[0].reason.contains("Roundness"));
-        let (wire, losses) =
-            imported_with_omissions(native.single_sequence().unwrap(), &native.media);
-        assert!(losses.is_empty(), "{losses:?}");
-        let effect = &wire["composition"]["layers"][0]["effects"][5]["effect"];
-        assert_eq!(effect["type"], "vignette");
-        assert_eq!(effect["amount"], expected);
-        assert_eq!(effect["radius"], 0.5);
-        assert_eq!(effect["feather"], 0.5);
-    }
-}
-
-#[test]
-fn human_lumetri_vignette_enable_and_bad_control_do_not_change_basic_correction() {
-    let source = include_str!("../../../tests/fixtures/human_lumetri_contrast.xml");
-    for (record, from, to, keep_vignette) in [
-        (
-            "881",
-            "-91445760000000000,true,",
-            "-91445760000000000,false,",
-            true,
-        ),
-        ("882", "<Name>Amount</Name>", "<Name>Wrong</Name>", false),
-    ] {
-        let start = source
-            .find(&format!("<VideoComponentParam ObjectID=\"{record}\""))
-            .unwrap();
-        let end = start + source[start..].find("</VideoComponentParam>").unwrap();
-        let xml = format!(
-            "{}{}{}",
-            &source[..start],
-            source[start..end].replace(from, to),
-            &source[end..]
-        );
-        let (native, omissions) =
-            crate::format::inspect_project_with_omissions(&xml, None).unwrap();
-        let effects = &native.single_sequence().unwrap().video_tracks[0]
-            .clip(0)
-            .effects;
-        assert_eq!(
-            effects.len(),
-            if keep_vignette { 6 } else { 5 },
-            "{omissions:?}"
-        );
-        assert!(effects[..5].iter().all(|effect| effect.enabled));
-        if keep_vignette {
-            assert!(!effects[5].enabled);
-        } else {
-            assert!(omissions
-                .iter()
-                .any(|omission| omission.reason.contains("Vignette replacement omitted")));
-        }
-    }
-}
-
-#[test]
-fn human_lumetri_keyed_vignette_enable_names_control_and_retains_basic_correction() {
-    let source = include_str!("../../../tests/fixtures/human_lumetri_contrast.xml");
-    let start = source
-        .find("<VideoComponentParam ObjectID=\"881\"")
-        .unwrap();
-    let end = start + source[start..].find("</VideoComponentParam>").unwrap();
-    for animation in [
-        "<IsTimeVarying>true</IsTimeVarying>",
-        "<Keyframes>0,true,0,0,0,0,0,0</Keyframes>",
-    ] {
-        let xml = format!("{}{animation}{}", &source[..end], &source[end..]);
-        let (native, omissions) =
-            crate::format::inspect_project_with_omissions(&xml, None).unwrap();
-        let effects = &native.single_sequence().unwrap().video_tracks[0]
-            .clip(0)
-            .effects;
-        assert_eq!(effects.len(), 5, "{omissions:?}");
-        assert!(effects.iter().all(|effect| effect.enabled));
-        assert_eq!(effects[0].params, PrEffectParams::LumetriExposure(1.0));
-        assert_eq!(
-            effects[1].params,
-            PrEffectParams::BrightnessContrast(PrBrightnessContrast {
-                brightness: 0.0,
-                contrast: 25.0
-            })
-        );
-        assert_eq!(effects[2].params, PrEffectParams::LumetriSaturation(130.0));
-        assert_eq!(effects[2].animations[0].keys.scalar().unwrap().len(), 2);
-        let omission = omissions
-            .iter()
-            .find(|omission| omission.reason.contains("Vignette replacement omitted"))
-            .unwrap();
-        assert!(
-            omission.reason.contains("requires static Vignette enable"),
-            "{omission:?}"
-        );
-        assert!(
-            !omission.reason.contains("Basic Correction"),
-            "{omission:?}"
-        );
-        assert!(!omission.reason.contains("Contrast"), "{omission:?}");
-    }
-}
-
-#[test]
-fn human_lumetri_white_balance_keeps_saved_controls_editable() {
-    let source = include_str!("../../../tests/fixtures/human_lumetri_contrast.xml");
-    for edited in [false, true] {
-        let mut xml = source.to_owned();
-        if edited {
-            // Supplementary mutations, not independently authored nonzero proof.
-            for (id, value) in [("786", "120"), ("787", "75")] {
-                let start = xml
-                    .find(&format!("<VideoComponentParam ObjectID=\"{id}\""))
-                    .unwrap();
-                let end = start + xml[start..].find("</VideoComponentParam>").unwrap();
-                let replacement = xml[start..end].replace(
-                    "-91445760000000000,0.,",
-                    &format!("-91445760000000000,{value},"),
-                );
-                xml.replace_range(start..end, &replacement);
-            }
-        }
-        let (native, omissions) =
-            crate::format::inspect_project_with_omissions(&xml, None).unwrap();
-        let (wire, losses) =
-            imported_with_omissions(native.single_sequence().unwrap(), &native.media);
-        assert!(losses.is_empty(), "{losses:?}");
-        assert!(omissions
-            .iter()
-            .any(|note| note.reason.contains("Tint sign reversed")));
-        let effects = &wire["composition"]["layers"][0]["effects"];
-        assert_eq!(
-            effects[3]["effect"],
-            json!({"type":"temperatureTint", "temperature":if edited {40.0} else {0.0}, "tint":0.0})
-        );
-        assert_eq!(
-            effects[4]["effect"],
-            json!({"type":"temperatureTint", "temperature":0.0, "tint":if edited {-25.0} else {0.0}})
-        );
-    }
-}
-
-#[test]
-fn human_lumetri_white_balance_affine_keys_and_invalid_control_preserve_siblings() {
-    let source = include_str!("../../../tests/fixtures/human_lumetri_contrast.xml");
-    let mut keyed = source.to_owned();
-    for id in ["786", "787"] {
-        let start = keyed
-            .find(&format!("<VideoComponentParam ObjectID=\"{id}\""))
-            .unwrap();
-        let end = start + keyed[start..].find("</VideoComponentParam>").unwrap();
-        let replacement = keyed[start..end]
-            .replace("-91445760000000000,0.,", "-91445760000000000,-300.,")
-            + "<IsTimeVarying>true</IsTimeVarying><Keyframes>0,-300.,0,0,0,0,0,0;127008000000,300.,0,0,0,0,0,0;</Keyframes>";
-        keyed.replace_range(start..end, &replacement);
-    }
-    let (native, omissions) = crate::format::inspect_project_with_omissions(&keyed, None).unwrap();
-    assert_eq!(omissions.len(), 1, "{omissions:?}");
-    let (wire, losses) = imported_with_omissions(native.single_sequence().unwrap(), &native.media);
-    assert!(losses.is_empty(), "{losses:?}");
-    for (name, expected) in [("temperature", -100.0), ("tint", 100.0)] {
-        let entry = wire["composition"]["dynamics"]["entries"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|entry| entry["target"]["paramName"] == name)
-            .unwrap();
-        let keys = entry["animator"]["keyframes"].as_array().unwrap();
-        assert_eq!(keys.len(), 2);
-        assert_eq!(keys[0]["value"]["value"], expected);
-        assert_eq!(keys[1]["value"]["value"], -expected);
-        assert_eq!(keys[1]["layerTime"], 500);
-    }
-    let broken = source.replace("<Name>Temperature</Name>", "<Name>Unknown</Name>");
-    let (native, omissions) = crate::format::inspect_project_with_omissions(&broken, None).unwrap();
-    let effects = &native.single_sequence().unwrap().video_tracks[0]
-        .clip(0)
-        .effects;
-    assert_eq!(effects.len(), 5);
-    assert_eq!(effects[3].params, PrEffectParams::LumetriTint(0.0));
-    assert!(omissions
-        .iter()
-        .any(|note| note.reason.contains("Temperature replacement omitted")));
 }
 
 #[test]

@@ -7,7 +7,7 @@ use super::{
 };
 use crate::schema::{
     native::*, records, AudioChannels, ColorSpace, OpenExrChannels, PrAudioOccurrence,
-    PrAudioStream, PrMedia, PrMediaKind, PrVideoOccurrence, VideoCodec, TICKS,
+    PrAudioStream, PrMedia, PrMediaKind, PrVideoOccurrence, PrVideoStream, VideoCodec, TICKS,
 };
 use base64::{engine::general_purpose::STANDARD, Engine};
 
@@ -260,71 +260,92 @@ pub(super) fn records(media: &BoundMedia<'_>, ids: &MediaIds) -> Vec<Record> {
     let spec = media.media();
     let video = spec.video.as_ref();
     let mut records: Vec<_> = [video.map(|video| {
-        Record::VideoStream(match video.kind {
-            PrMediaKind::Still { alpha } | PrMediaKind::NumberedStills { alpha } => {
-                still::video_stream(video, alpha, ids)
-            }
-            PrMediaKind::OpenExr {
-                alpha, numbered, ..
-            } => still::open_exr_video_stream(video, alpha, numbered, ids),
-            PrMediaKind::AfterEffectsComposition(source) => {
-                super::after_effects::video_stream(video, source, ids)
-            }
-            // Every corpus matte stream has the still fields and no alpha.
-            PrMediaKind::ColorMatte(_) => still::video_stream(video, false, ids),
-            // Every corpus Black Video stream also carries `IsContinuousTime`.
-            PrMediaKind::Adjustment => VideoStream {
-                is_continuous_time: Some("true".to_owned()),
-                ..still::video_stream(video, false, ids)
+        Record::VideoStream(with_input_lut(
+            video,
+            ids,
+            match video.kind {
+                PrMediaKind::Still { alpha } | PrMediaKind::NumberedStills { alpha } => {
+                    still::video_stream(video, alpha, ids)
+                }
+                PrMediaKind::OpenExr {
+                    alpha, numbered, ..
+                } => still::open_exr_video_stream(video, alpha, numbered, ids),
+                PrMediaKind::AfterEffectsComposition(source) => {
+                    super::after_effects::video_stream(video, source, ids)
+                }
+                // Every corpus matte stream has the still fields and no alpha.
+                PrMediaKind::ColorMatte(_) => still::video_stream(video, false, ids),
+                // Every corpus Black Video stream also carries `IsContinuousTime`.
+                PrMediaKind::Adjustment => VideoStream {
+                    is_continuous_time: Some("true".to_owned()),
+                    ..still::video_stream(video, false, ids)
+                },
+                PrMediaKind::Video {
+                    codec,
+                    hdr_profile,
+                    color_space_override,
+                } => VideoStream {
+                    is_numbered_stills: None,
+                    is_still: None,
+                    is_continuous_time: None,
+                    alpha_info_is_uncertain: None,
+                    is_overriden_image_orientation_type: None,
+                    object_id: ids.stream,
+                    class_id: Some(records::VIDEO_STREAM.class_id.to_owned()),
+                    version: Some(records::VIDEO_STREAM.version.to_owned()),
+                    frame_rate: Some(video.frame_rate.ticks_per_frame().to_string()),
+                    is_frame_rate_overridden: None,
+                    overidden_frame_rate: None,
+                    duration: Some(video.intrinsic_ticks.to_string()),
+                    // An alpha master (ProRes 4444 with a 32-bit entry) keeps its
+                    // alpha readable, as the corpus `ap4h` masters are saved
+                    // without `IgnoreAlpha` and with straight `AlphaType`.
+                    ignore_alpha: (!codec.is_some_and(VideoCodec::has_alpha))
+                        .then(|| "true".to_owned()),
+                    frame_rect: Some(format!("0,0,{},{}", video.width, video.height)),
+                    pixel_aspect_ratio: None,
+                    original_par: None,
+                    is_par_overridden: Some("true".to_owned()),
+                    overridden_par: Some(video.pixel_aspect.native()),
+                    codec_type: codec.map(|codec| codec.codec_type().to_owned()),
+                    original_color_space: Some(
+                        serde_json::to_string(&match hdr_profile {
+                            Some(profile) => ColorSpace::source_hdr(profile),
+                            None => ColorSpace::source_sdr(),
+                        })
+                        .expect("native source color fields serialize"),
+                    ),
+                    selected_color_space: None,
+                    // Premiere 26.5.2 grammar of an active Color Space Override.
+                    overridden_color_space: color_space_override.map(|name| {
+                        serde_json::to_string(&ColorSpace::clip_override(name))
+                            .expect("native override color fields serialize")
+                    }),
+                    is_color_space_overridden: color_space_override.map(|_| "true".to_owned()),
+                    input_lut_specified: None,
+                    input_lut_id: None,
+                    input_lut_asset: None,
+                    input_lut_display_name: None,
+                    input_lut_file_name: None,
+                    alpha_type: Some(
+                        if codec.is_some_and(VideoCodec::has_alpha) {
+                            records::VIDEO_STRAIGHT_ALPHA_TYPE
+                        } else {
+                            records::VIDEO_NO_ALPHA_TYPE
+                        }
+                        .to_owned(),
+                    ),
+                    field_type_is_uncertain: Some("true".to_owned()),
+                    original_field_type: None,
+                    original_image_orientation_type: Some(video.orientation.native().to_owned()),
+                },
             },
-            PrMediaKind::Video { codec, hdr_profile } => VideoStream {
-                is_numbered_stills: None,
-                is_still: None,
-                is_continuous_time: None,
-                alpha_info_is_uncertain: None,
-                is_overriden_image_orientation_type: None,
-                object_id: ids.stream,
-                class_id: Some(records::VIDEO_STREAM.class_id.to_owned()),
-                version: Some(records::VIDEO_STREAM.version.to_owned()),
-                frame_rate: Some(video.frame_rate.ticks_per_frame().to_string()),
-                is_frame_rate_overridden: None,
-                overidden_frame_rate: None,
-                duration: Some(video.intrinsic_ticks.to_string()),
-                // An alpha master (ProRes 4444 with a 32-bit entry) keeps its
-                // alpha readable, as the corpus `ap4h` masters are saved
-                // without `IgnoreAlpha` and with straight `AlphaType`.
-                ignore_alpha: (!codec.is_some_and(VideoCodec::has_alpha))
-                    .then(|| "true".to_owned()),
-                frame_rect: Some(format!("0,0,{},{}", video.width, video.height)),
-                pixel_aspect_ratio: None,
-                original_par: None,
-                is_par_overridden: Some("true".to_owned()),
-                overridden_par: Some(video.pixel_aspect.native()),
-                codec_type: codec.map(|codec| codec.codec_type().to_owned()),
-                original_color_space: Some(
-                    serde_json::to_string(&match hdr_profile {
-                        Some(profile) => ColorSpace::source_hdr(profile),
-                        None => ColorSpace::source_sdr(),
-                    })
-                    .expect("native source color fields serialize"),
-                ),
-                alpha_type: Some(
-                    if codec.is_some_and(VideoCodec::has_alpha) {
-                        records::VIDEO_STRAIGHT_ALPHA_TYPE
-                    } else {
-                        records::VIDEO_NO_ALPHA_TYPE
-                    }
-                    .to_owned(),
-                ),
-                field_type_is_uncertain: Some("true".to_owned()),
-                original_field_type: None,
-                original_image_orientation_type: Some(video.orientation.native().to_owned()),
-            },
-        })
+        ))
     })]
     .into_iter()
     .flatten()
     .collect();
+    records.extend(video.and_then(|video| lut_asset(video, ids)));
     let template_clip = match media {
         BoundMedia::File {
             media,
@@ -354,6 +375,40 @@ pub(super) fn records(media: &BoundMedia<'_>, ids: &MediaIds) -> Vec<Record> {
         records.extend(audio_records(audio, ids));
     }
     records
+}
+
+/// `stream` with the media's Interpret Footage Input LUT fields, in the
+/// Premiere 26.5.2 grammar of `color_clip_input_lut.prproj`.
+fn with_input_lut(video: &PrVideoStream, ids: &MediaIds, stream: VideoStream) -> VideoStream {
+    let (Some(lut), Some(object)) = (&video.input_lut, ids.input_lut) else {
+        return stream;
+    };
+    VideoStream {
+        input_lut_asset: Some(Reference::object(object)),
+        input_lut_specified: Some("true".to_owned()),
+        input_lut_id: Some(lut.id.clone()),
+        input_lut_display_name: Some(lut.display_name.clone()),
+        input_lut_file_name: Some(lut.file_name.clone()),
+        ..stream
+    }
+}
+
+/// The `LUTAsset` record that embeds the samples of the media's Input LUT.
+fn lut_asset(video: &PrVideoStream, ids: &MediaIds) -> Option<Record> {
+    let (lut, object_id) = (video.input_lut.as_ref()?, ids.input_lut?);
+    Some(Record::LutAsset(LutAsset {
+        object_id,
+        class_id: Some(records::LUT_ASSET.class_id.to_owned()),
+        version: Some(records::LUT_ASSET.version.to_owned()),
+        id: Some(lut.id.clone()),
+        display_name: Some(lut.display_name.clone()),
+        file_name: Some(lut.file_name.clone()),
+        blob: Some(LutBlob {
+            encoding: records::ENCODING.to_owned(),
+            binary_hash: super::graph::uuid(),
+            value: STANDARD.encode(lut.table.to_itx3()),
+        }),
+    }))
 }
 
 /// The media, source and markers records of one file on disk; only file clips

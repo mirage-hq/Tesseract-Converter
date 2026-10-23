@@ -255,7 +255,11 @@ pub(crate) struct PendingTesseractFile {
     _channel_files: Option<tempfile::TempDir>,
     _raw_audio_files: Option<tempfile::TempDir>,
     _mask_files: tempfile::TempDir,
+    /// `.cube` files written from embedded copies, which `builder` packages.
+    _lut_files: crate::lut_assets::LutFiles,
     _normalized_stills: Vec<tempfile::NamedTempFile>,
+    /// Generated `.cube` files of Interpret Footage Input LUTs.
+    _input_luts: Option<tempfile::TempDir>,
 }
 
 #[derive(Debug)]
@@ -1542,6 +1546,7 @@ fn convert_premiere_sequence_with_options(
     if parsed.video_items().next().is_none()
         && parsed.nest_occurrences().next().is_none()
         && parsed.audio.is_empty()
+        && !parsed.empty_template_placeholder
         && !(parsed.adjustment_only_template && parsed.timeline_end_ticks > 0)
     {
         omit(
@@ -1644,6 +1649,7 @@ fn convert_premiere_sequence_with_options(
         media.insert(id, resolved);
     }
     let capsule_resources = crate::capsule::picture::PictureResources::collect(&parsed);
+    let lut_files = crate::lut_assets::LutFiles::resolve(root, &mut parsed);
     let document = crate::convert::sequence_document_with_progress(
         &parsed,
         &project_media,
@@ -1678,8 +1684,10 @@ fn convert_premiere_sequence_with_options(
             }
         }
     }
+    let (builder, input_luts) = package_input_luts(builder, &parsed, &project_media, &media)?;
     let (builder, linked_media) = linked.package(builder)?;
     let builder = capsule_resources.package(builder)?;
+    let builder = lut_files.package(builder)?;
     builder.validate()?;
     let output = PendingTesseractFile {
         source: source.to_owned(),
@@ -1691,11 +1699,56 @@ fn convert_premiere_sequence_with_options(
         _channel_files: channel_files,
         _raw_audio_files: raw_audio_files,
         _mask_files: mask_files,
+        _lut_files: lut_files,
         _normalized_stills: normalized_stills,
+        _input_luts: input_luts,
     };
     // Check mode stops here, so media must still match the bytes we inspected.
     output.verify_media()?;
     Ok(Some(output))
+}
+
+/// Package each packaged media's Interpret Footage Input LUT once per LUT
+/// GUID, as `.cube` text of its embedded samples
+/// (`convert::clip_input_lut` names the asset on the layer).
+fn package_input_luts(
+    mut builder: TesseractFileBuilder,
+    parsed: &PrSequence,
+    project_media: &BTreeMap<MediaId, PrMedia>,
+    media: &BTreeMap<MediaId, ResolvedMedia>,
+) -> Result<(TesseractFileBuilder, Option<tempfile::TempDir>)> {
+    let mut staging = None;
+    let mut packaged = BTreeSet::new();
+    for id in parsed.media_in_order() {
+        if media
+            .get(id)
+            .and_then(|resolved| resolved.asset.as_ref())
+            .is_none()
+        {
+            continue;
+        }
+        let Some(lut) = project_media[id]
+            .video
+            .as_ref()
+            .and_then(|video| video.input_lut.as_ref())
+        else {
+            continue;
+        };
+        let asset_id = lut.asset_id();
+        if !packaged.insert(asset_id.clone()) {
+            continue;
+        }
+        let root = match &mut staging {
+            Some(root) => root,
+            None => staging.insert(tempfile::tempdir()?),
+        };
+        let directory = root.path().join(packaged.len().to_string());
+        std::fs::create_dir(&directory)?;
+        let path = directory.join(lut.package_file_name());
+        std::fs::write(&path, lut.table.to_cube(&lut.display_name))?;
+        builder = builder.add_asset(asset_id.as_str(), &path, tesseract_file::AssetKind::Other)?;
+    }
+    Ok((builder, staging))
 }
 
 impl PendingTesseractFile {

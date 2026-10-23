@@ -62,6 +62,7 @@ use std::{
 };
 
 mod lumetri;
+mod lumetri_lut;
 mod offset;
 
 const COMPONENT: &str = "Component";
@@ -869,7 +870,13 @@ impl SplitChain<'_, '_> {
                 approximations.push(crate::schema::ultra_key::APPROXIMATION.to_owned());
                 read_ultra_key(graph, record, &native).map(|effect| vec![effect])
             } else if self.ordered && native.match_name == Some(lumetri::MATCH_NAME) {
-                lumetri::read(graph, record, &native, &mut omitted_controls)
+                lumetri::read(
+                    graph,
+                    record,
+                    &native,
+                    &mut approximations,
+                    &mut omitted_controls,
+                )
             } else if self.ordered && native.match_name == Some(crate::schema::OFFSET.match_name) {
                 offset::read(graph, record, &native).map(|effect| vec![effect])
             } else if self.ordered && native.match_name == Some(LEVELS.match_name) {
@@ -892,8 +899,13 @@ impl SplitChain<'_, '_> {
             let converted = converted.and_then(|mut effects| {
                 if record.element().child("SubComponents").is_some() {
                     let mask = read_effect_mask(graph, record, omissions)?;
+                    // A Lumetri Color maps to a varying number of effects (its
+                    // non-neutral sections), so its mask scope is never one.
                     ensure!(
-                        mask.is_none() || (owner.source.is_none() && effects.len() == 1),
+                        mask.is_none()
+                            || (owner.source.is_none()
+                                && effects.len() == 1
+                                && native.match_name != Some(lumetri::MATCH_NAME)),
                         "an effect mask requires one mapped occurrence effect"
                     );
                     if let [effect] = effects.as_mut_slice() {
@@ -958,7 +970,17 @@ impl SplitChain<'_, '_> {
                         crate::approximate(omissions, &native.identity, format!("{description}: Drop Shadow retains color, opacity, static direction and editable distance/softness; softness uses half-radius Gaussian blur. Native group bounds, Motion scaling, color/alpha and edge sampling are unmeasured; Shadow Only and animated color/opacity/direction are unsupported"));
                     }
                     if native.match_name == Some(crate::schema::PROC_AMP.match_name) {
-                        crate::approximate(omissions, &native.identity, format!("{description}: ProcAmp Brightness is replaced by FX Exposure offset (saved percentage / 100), with neutral exposure/gamma; native YUV/RGB processing and alpha fidelity are unmeasured"));
+                        let exposure = effect.iter().any(|effect| matches!(effect.params, PrEffectParams::ProcAmp(proc_amp) if proc_amp.is_exposure()));
+                        let note = if exposure {
+                            "ProcAmp converts to an editable exposure: at Hue 0 with Contrast equal to Saturation, Premiere 26.5.2 renders it as a display-RGB gain of Contrast/100 (written as log2 stops) plus Brightness/100 (the offset), exact on opaque 8-bit renders; alpha handling is unmeasured"
+                        } else {
+                            "ProcAmp converts to an editable channelMixer: Premiere 26.5.2 renders ProcAmp as a BT.601 Y'CbCr luma gain and offset and chroma turn and scale, an affine display-RGB transform that channelMixer holds exactly (within 0.25 mean 8-bit codes on opaque renders); the controls become matrix rows, and alpha handling is unmeasured"
+                        };
+                        crate::approximate(
+                            omissions,
+                            &native.identity,
+                            format!("{description}: {note}"),
+                        );
                     }
                     effects.extend(effect);
                     converted_effects.push((native.identity, description));
@@ -1016,6 +1038,7 @@ fn standard_effect_reader(
         Some("AE.ADBE Offset") => offset::reject_interpretation,
         Some(name) if name == BRIGHTNESS_CONTRAST.match_name => read_brightness_contrast,
         Some(name) if name == crate::schema::PROC_AMP.match_name => read_proc_amp,
+        Some(name) if name == crate::schema::GAMMA_CORRECTION.match_name => read_gamma_correction,
         Some(name) if name == crate::schema::DROP_SHADOW.match_name => read_drop_shadow,
         Some(name) if name == INVERT.match_name => read_invert,
         Some(name) if name == FIND_EDGES.match_name => read_find_edges,
@@ -1552,7 +1575,7 @@ fn read_levels_preserving_master(
     omitted_controls: &mut Vec<String>,
 ) -> Result<PrEffect> {
     let values = param_values(graph, record, &LEVELS)?;
-    let stored = private_values(graph, record)?;
+    let stored = private_values(graph, record, LEVELS.params.len())?;
     let mut rgb = [0.0; 5];
     let mut channels = [LEVELS_NEUTRAL; 3];
     for ((index, param), stored) in LEVELS.params.iter().enumerate().zip(stored) {
@@ -1635,11 +1658,11 @@ fn read_levels_preserving_master(
     })
 }
 
-/// The little-endian u16 values of a Levels record's
-/// `PremiereFilterPrivateData`, one per parameter. Premiere
+/// The little-endian u16 values of a Levels or Gamma Correction record's
+/// `PremiereFilterPrivateData`, one for each of its `count` parameters. Premiere
 /// stores each distinct blob once; a copy is empty and names it by
 /// `BinaryHash`.
-fn private_values(graph: &Graph<'_>, record: Record<'_>) -> Result<Vec<u16>> {
+fn private_values(graph: &Graph<'_>, record: Record<'_>, count: usize) -> Result<Vec<u16>> {
     let data = record
         .element()
         .child("PremiereFilterPrivateData")
@@ -1667,10 +1690,9 @@ fn private_values(graph: &Graph<'_>, record: Record<'_>) -> Result<Vec<u16>> {
             unsupported(format!("invalid PremiereFilterPrivateData base64: {error}"))
         })?;
     ensure!(
-        bytes.len() == 2 * LEVELS.params.len(),
-        "PremiereFilterPrivateData has {} bytes, not 2 for each of the {} parameters",
-        bytes.len(),
-        LEVELS.params.len()
+        bytes.len() == 2 * count,
+        "PremiereFilterPrivateData has {} bytes, not 2 for each of the {count} parameters",
+        bytes.len()
     );
     Ok(bytes
         .as_chunks::<2>()
@@ -1705,32 +1727,79 @@ fn read_drop_shadow(
     })
 }
 
+/// ProcAmp as an FX `exposure` (no Hue turn and Contrast equal to
+/// Saturation: an RGB gain and offset, keyed Brightness included) or else
+/// as the FX `channelMixer` of its affine transform (static).
+/// [`PrProcAmp::matrix`] beyond `channelMixer`'s weights (-2 to 2) or
+/// constants (-1 to 1) is not converted.
 fn read_proc_amp(
     graph: &Graph<'_>,
     record: Record<'_>,
     native: &NativeEffect<'_>,
 ) -> Result<PrEffect> {
-    use crate::schema::{PROC_AMP, PROC_AMP_BRIGHTNESS};
+    use crate::schema::{PrProcAmp, PROC_AMP};
     let enabled = native.enabled()?;
     let values = param_values(graph, record, &PROC_AMP)?;
-    for (param, neutral) in PROC_AMP.params[1..4].iter().zip([100.0, 0.0, 100.0]) {
-        ensure!(
-            values.scalar(param)? == neutral,
-            "ProcAmp nonneutral {} has no mapping; effect omitted, picture retained",
-            param.name
-        );
-    }
     ensure!(
         values.get(&PROC_AMP.params[4])? == "false",
         "ProcAmp split view has no mapping; effect omitted, picture retained"
     );
     // Split Percent is inactive with split view off, but still validate its value.
     values.scalar(&PROC_AMP.params[5])?;
+    let [brightness, contrast, hue, saturation] =
+        [0, 1, 2, 3].map(|index| values.scalar(&PROC_AMP.params[index]));
+    let proc_amp = PrProcAmp {
+        brightness: brightness?,
+        contrast: contrast?,
+        hue: hue?,
+        saturation: saturation?,
+    };
+    ensure!(
+        proc_amp.is_exposure()
+            || proc_amp.matrix().iter().all(|row| {
+                row[..3].iter().all(|weight| weight.abs() <= 2.0) && row[3].abs() <= 1.0
+            }),
+        "ProcAmp Contrast {} with Hue {} and Saturation {} mixes channels beyond FX channelMixer's weights (-2 to 2); effect omitted, picture retained",
+        proc_amp.contrast,
+        proc_amp.hue,
+        proc_amp.saturation
+    );
+    ensure!(
+        proc_amp.is_exposure() || values.animations.is_empty(),
+        "keyed ProcAmp with a Hue turn or Contrast unequal to Saturation has no channelMixer key mapping; effect omitted, picture retained"
+    );
     Ok(PrEffect {
         mask: None,
         enabled,
-        params: PrEffectParams::ProcAmpBrightness(values.scalar(&PROC_AMP_BRIGHTNESS)?),
+        params: PrEffectParams::ProcAmp(proc_amp),
         animations: values.animations,
+    })
+}
+
+/// Gamma Correction's static whole Gamma, repeated in its private data.
+fn read_gamma_correction(
+    graph: &Graph<'_>,
+    record: Record<'_>,
+    native: &NativeEffect<'_>,
+) -> Result<PrEffect> {
+    use crate::schema::{GAMMA_CORRECTION, GAMMA_CORRECTION_GAMMA};
+    let enabled = native.enabled()?;
+    let values = param_values(graph, record, &GAMMA_CORRECTION)?;
+    ensure!(
+        values.animations.is_empty(),
+        "keyed Gamma Correction has no mapping; effect omitted, picture retained"
+    );
+    let gamma = values.scalar(&GAMMA_CORRECTION_GAMMA)?;
+    let stored = private_values(graph, record, 1)?;
+    ensure!(
+        stored.as_slice() == [gamma as u16] && gamma.fract() == 0.0,
+        "Gamma Correction private data {stored:?} does not repeat its whole Gamma {gamma}"
+    );
+    Ok(PrEffect {
+        mask: None,
+        enabled,
+        params: PrEffectParams::GammaCorrection(gamma),
+        animations: Vec::new(),
     })
 }
 
@@ -3504,7 +3573,7 @@ fn read_levels_with_channels(
         omitted.extend(notes);
         return Ok(vec![master]);
     }
-    let stored = private_values(graph, record)?;
+    let stored = private_values(graph, record, LEVELS.params.len())?;
     let mut rows = [[0.0; 5]; 3];
     for (channel, row) in rows.iter_mut().enumerate() {
         *row = std::array::from_fn(|i| f64::from(stored[5 + channel * 5 + i]));

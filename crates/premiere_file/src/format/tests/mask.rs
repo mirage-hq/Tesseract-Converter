@@ -1396,6 +1396,7 @@ fn saved_affine_tracking_becomes_editable_path_keys_on_its_native_clock() {
             video.kind = crate::schema::PrMediaKind::Video {
                 codec: Some(crate::schema::VideoCodec::H264),
                 hdr_profile: None,
+                color_space_override: None,
             };
         }
     }
@@ -1858,6 +1859,7 @@ fn written_opacity_mask_records_read_back_in_the_v7_form() {
     source.video.as_mut().unwrap().kind = crate::schema::PrMediaKind::Video {
         codec: Some(crate::schema::VideoCodec::H264),
         hdr_profile: None,
+        color_space_override: None,
     };
     source.name = "source.mp4".into();
     source.relative_path = Some("./media/source.mp4".into());

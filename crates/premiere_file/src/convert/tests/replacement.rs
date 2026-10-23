@@ -97,6 +97,7 @@ fn enabled_eye_contact_exports_the_active_replacement_with_its_own_codec() {
         PrMediaKind::Video {
             codec: Some(VideoCodec::HevcMain),
             hdr_profile: None,
+            color_space_override: None,
         }
     );
     let reasons: Vec<_> = omissions.iter().map(|item| item.reason.as_str()).collect();
@@ -125,6 +126,7 @@ fn disabled_eye_contact_exports_the_original_and_reports_the_unused_output() {
         PrMediaKind::Video {
             codec: Some(VideoCodec::H264),
             hdr_profile: None,
+            color_space_override: None,
         }
     );
     let reasons: Vec<_> = omissions.iter().map(|item| item.reason.as_str()).collect();

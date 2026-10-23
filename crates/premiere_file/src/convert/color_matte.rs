@@ -517,6 +517,8 @@ pub(super) fn export_rect_layer(
             width,
             height,
             kind: PrMediaKind::ColorMatte(matte),
+            input_lut: None,
+            camera_override: None,
         }),
         audio: None,
     };

@@ -24,6 +24,22 @@ enclosing repository checkout. Registration or passing Rust tests does not estab
 visual fidelity, and this documentation does not claim that the current checkout's
 visual gates were run.
 
+## Colour fixture references
+
+The native renders of the colour and template projects in
+`crates/premiere_file/tests/fixtures/` (direct Premiere 26.5.2 renders,
+including the HDR ProRes `.mov` renders) and of
+`crates/aftereffects_file/tests/fixtures/color_ae_*.aep` (`aerender` and AME
+renders) are **not committed**: no in-repo test reads them. Their file names,
+SHA-256, sizes and authoring requests stay in `color_fixtures.provenance.json`,
+`template_fixtures.provenance.json`, the `lumetri_*_probe.provenance.json`
+files and `color_ae_fixtures.provenance.json`, marked `"committed": false`,
+`"local_evidence": true`. Measurements taken from them are recorded in the
+support ledgers and, where a test needs one, as numeric constants in that
+test. The probe projects' ramp still is likewise local; its generator
+`lumetri_rgb_curves_probe.ramp.py` is committed. None of these renders is a
+`manifest.json` or `aep_video_references.json` case.
+
 ## Evidence contract
 
 The manifest contains **41 `video_reference` cases**. The manifest, rather than

@@ -15,6 +15,7 @@ input_record!(MasterClip, records::MASTER_CLIP);
 input_record!(Media, records::MEDIA);
 input_record!(VideoMediaSource, records::VIDEO_MEDIA_SOURCE);
 input_record!(VideoStream, records::VIDEO_STREAM);
+input_record!(LutAsset, records::LUT_ASSET);
 input_record!(Sequence, records::SEQUENCE);
 input_record!(VideoTrackGroup, records::VIDEO_TRACK_GROUP);
 input_record!(VideoClipTrack, records::VIDEO_CLIP_TRACK);

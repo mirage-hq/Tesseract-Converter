@@ -72,11 +72,14 @@ fn project(occurrences: Vec<PrVideoOccurrence>) -> PrProjectFile {
                         kind: crate::schema::PrMediaKind::Video {
                             codec: Some(VideoCodec::H264),
                             hdr_profile: None,
+                            color_space_override: None,
                         },
                         intrinsic_ticks: 10 * TICKS_PER_SECOND,
                         frame_rate: (FrameRate::Fps30).into(),
                         width: 1920,
                         height: 1080,
+                        input_lut: None,
+                        camera_override: None,
                     }),
                     audio: None,
                 },
@@ -91,6 +94,7 @@ fn project(occurrences: Vec<PrVideoOccurrence>) -> PrProjectFile {
     PrProjectFile::from_sequences(
         vec![PrSequence {
             hdr: None,
+            aces: None,
             native_frame_ticks: None,
             id: None,
             name: "Fresh & editable".into(),
@@ -102,6 +106,7 @@ fn project(occurrences: Vec<PrVideoOccurrence>) -> PrProjectFile {
             height: 1080,
             timeline_end_ticks,
             adjustment_only_template: false,
+            empty_template_placeholder: false,
         }],
         media,
     )
@@ -257,6 +262,7 @@ fn written_video_masters_carry_their_codec_code_and_alpha_declaration() {
             crate::schema::PrMediaKind::Video {
                 codec: Some(codec),
                 hdr_profile: None,
+                color_space_override: None,
             };
         let xml = project_xml(&project).unwrap();
         let document = roxmltree::Document::parse(&xml).unwrap();

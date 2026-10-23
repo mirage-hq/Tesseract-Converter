@@ -3172,7 +3172,7 @@ fn a_group_exports_its_crop_or_keyed_wipe_and_its_effects_on_its_placement() {
         {"id": 11, "enabled": true, "effect": {"type": "gaussianBlur", "blurriness": 10.0}},
         {"id": 12, "enabled": true, "effect": {"type": "gaussianBlur", "blurriness": 5.0}},
         {"id": 13, "enabled": false, "effect": {"type": "gaussianBlur", "blurriness": 30.0}},
-        {"id": 14, "enabled": true, "effect": {"type": "vignette", "amount": 0.5}},
+        {"id": 14, "enabled": true, "effect": {"type": "personMatte"}},
         {"id": 15, "enabled": true, "effect": {"type": "mosaic", "horizontalBlocks": 16.0, "verticalBlocks": 9.0, "sharpColors": true}}
     ]);
     let key = |id: &str, layer_time: i64, value: f64| json!({"id": id, "layerTime": layer_time, "value": {"type": "float", "value": value}, "easing": {"type": "linear"}});
@@ -3181,7 +3181,7 @@ fn a_group_exports_its_crop_or_keyed_wipe_and_its_effects_on_its_placement() {
         "animator": {"type": "keyframes", "enabled": true, "keyframes": [key("a", 0, 5.0), key("b", 500, 20.0)]},
     }]});
     let (project, omissions) = export(document);
-    // Only the Vignette (no mapping) and the Mosaic (no nest host) are
+    // Only the Person Matte (no mapping) and the Mosaic (no nest host) are
     // reported; the keyed blur exports with its keys.
     assert_eq!(
         omissions,
@@ -3190,7 +3190,9 @@ fn a_group_exports_its_crop_or_keyed_wipe_and_its_effects_on_its_placement() {
                 scope: OmissionScope::Feature,
                 kind: OmissionKind::Omitted,
                 record: "layer 2 (\"Inner\")".into(),
-                reason: "effects: vignette effect 14 was not exported: it has no Premiere effect mapping".into(),
+                reason: "effects: personMatte effect 14 was not exported: it has no Premiere \
+                         effect mapping"
+                    .into(),
             },
             Omission {
                 scope: OmissionScope::Feature,
@@ -7060,4 +7062,65 @@ fn group_remap_recovery_uses_current_window_not_unused_source_key_tails() {
             .any(|loss| loss.reason.contains("authored child selection")),
         "{losses:?}"
     );
+}
+
+#[test]
+fn empty_template_placeholder_nest_imports_without_a_frame_and_exports_as_an_empty_nest() {
+    let (mut outer, _) = nested_sequence();
+    let nest = &mut outer.video_tracks[1].nests[0];
+    nest.sequence.video_tracks = vec![PrVideoTrack {
+        transitions: Vec::new(),
+        items: Vec::new(),
+        nests: Vec::new(),
+    }];
+    nest.sequence.audio.clear();
+    nest.sequence.timeline_end_ticks = 0;
+    nest.sequence.empty_template_placeholder = true;
+    nest.opacity = 50.0;
+    nest.effects = vec![blur(25.0)];
+    let document = import(&outer);
+    // The upper track's groups come first.
+    let group = &document["composition"]["layers"][0];
+    assert_eq!(group["type"], "Group");
+    assert_eq!(group["transform"]["opacity"], 50.0);
+    assert!(
+        group["masks"].as_array().is_none_or(Vec::is_empty),
+        "{group}"
+    );
+    let [stage] = group["layers"].as_array().unwrap().as_slice() else {
+        panic!("{group}");
+    };
+    assert_eq!(stage["type"], "Group");
+    assert_eq!(stage["effects"][0]["effect"]["blurriness"], 25.0);
+    assert!(
+        stage["layers"].as_array().is_none_or(Vec::is_empty),
+        "{stage}"
+    );
+    assert!(
+        stage["masks"].as_array().is_none_or(Vec::is_empty),
+        "{stage}"
+    );
+
+    let record = format!("layer {} (", group["id"]);
+    let (project, omissions) = export(document);
+    assert!(
+        !omissions
+            .iter()
+            .any(|item| item.record.starts_with(&record)
+                || item.reason.contains("no exportable video")),
+        "{omissions:?}"
+    );
+    let exported = project.single_sequence().unwrap();
+    let owner = exported
+        .nest_occurrences()
+        .find(|nest| nest.opacity == 50.0)
+        .unwrap_or_else(|| panic!("{omissions:?}"));
+    let [placeholder] = owner.sequence.nest_occurrences().collect::<Vec<_>>()[..] else {
+        panic!("{owner:?}");
+    };
+    assert!(placeholder.sequence.empty_template_placeholder);
+    assert_eq!(placeholder.sequence.expanded_occurrence_count(), 0);
+    // FX Gaussian Blur exports as the blur that import reads back as one.
+    assert_eq!(placeholder.effects.len(), 1, "{placeholder:?}");
+    assert!(placeholder.effects[0].enabled);
 }

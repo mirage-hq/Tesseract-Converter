@@ -488,6 +488,60 @@ fn export_linear_wipe(
     })
 }
 
+/// Premiere interprets a media's picture once for all of its clips, so a
+/// Color Space Override or Input LUT that `source` asks for and `existing`
+/// (the media's first exported clip) does not cannot be written for this clip
+/// alone. `source` takes the written interpretation; the returned report
+/// names it.
+fn share_media_interpretation(
+    existing: &PrVideoStream,
+    source: &mut PrVideoStream,
+) -> Option<String> {
+    let describe = |label: Option<&str>, lut: Option<&crate::schema::PrClipInputLut>| {
+        let space = label.map_or_else(
+            || "no Color Space Override".to_owned(),
+            |label| format!("Color Space Override {label:?}"),
+        );
+        let lut = lut.map_or_else(
+            || "no Input LUT".to_owned(),
+            |lut| format!("Input LUT {:?}", lut.file_name),
+        );
+        format!("{space} and {lut}")
+    };
+    let written_space = match existing.kind {
+        PrMediaKind::Video {
+            color_space_override,
+            ..
+        } => color_space_override,
+        _ => None,
+    };
+    let requested_space = match &source.kind {
+        PrMediaKind::Video {
+            color_space_override,
+            ..
+        } => *color_space_override,
+        _ => None,
+    };
+    if written_space == requested_space && existing.input_lut == source.input_lut {
+        return None;
+    }
+    let reason = format!(
+        "{} was not exported: Premiere interprets shared media once, and an earlier clip of the same media already wrote {}; this clip's {} is not written and it plays with the earlier interpretation",
+        ExportField::InputTransform,
+        describe(written_space, existing.input_lut.as_ref()),
+        describe(requested_space, source.input_lut.as_ref()),
+    );
+    if let PrMediaKind::Video {
+        color_space_override,
+        ..
+    } = &mut source.kind
+    {
+        *color_space_override = written_space;
+    }
+    source.input_lut.clone_from(&existing.input_lut);
+    Some(reason)
+}
+
 pub(super) fn source_media<'a>(
     media: &'a mut BTreeMap<MediaId, PrMedia>,
     id: &MediaId,
@@ -2758,6 +2812,7 @@ pub(crate) fn lower_document_with_progress(
         document,
         natural_frames,
         media_facts,
+        &crate::cube_lut::InputLutAssets::new(),
         audio_facts,
         fonts,
         frame_rate,
@@ -2775,6 +2830,7 @@ pub(crate) fn lower_document_with_hdr(
     document: &EditableFxCompositionDocument,
     natural_frames: &BTreeSet<LayerId>,
     media_facts: &BTreeMap<String, MediaFacts>,
+    input_luts: &crate::cube_lut::InputLutAssets,
     audio_facts: &BTreeMap<String, crate::audio_media::SourceSound>,
     fonts: &BTreeMap<String, FontAssetProperties>,
     frame_rate: FrameRate,
@@ -2793,11 +2849,7 @@ pub(crate) fn lower_document_with_hdr(
     if hdr.is_some() {
         approximate(omissions, "document HDR", "Native PQ/HLG target explicitly selected; graphics-white intent retained. Color Matte rectangles normalize to editable Graphic Shapes because no HDR matte source interpretation is proved. Graphic/text RGB storage remains native 8-bit and cannot prove a >=1024-level ramp. Nonlinear interpolation, blends/effects and source working-space interpretation are unproved; no native precision claim.");
     }
-    if !document.color_management().is_legacy() {
-        return Err(unsupported(
-            "acescct color management cannot be exported to Premiere yet",
-        ));
-    }
+    let aces = super::color_management::export_policy(document, hdr, omissions);
     let composition = document.composition();
     for key in document.unknown_field_names() {
         omit(
@@ -3012,6 +3064,8 @@ pub(crate) fn lower_document_with_hdr(
             property_tracks: &mut property_tracks,
             written: &mut written,
             media_facts,
+            input_luts,
+            aces: aces.is_some(),
             authored_video_durations: &authored_video_durations,
             natural_frames,
             audio_facts,
@@ -3081,6 +3135,7 @@ pub(crate) fn lower_document_with_hdr(
         };
     let mut sequence = PrSequence {
         hdr: hdr_settings,
+        aces,
         native_frame_ticks: None,
         id: None,
         name: sequence_name,
@@ -3092,6 +3147,7 @@ pub(crate) fn lower_document_with_hdr(
         height,
         timeline_end_ticks: document_end_ticks,
         adjustment_only_template: false,
+        empty_template_placeholder: false,
     };
     // A trailing tail exports as the sequence work area and stays black in the
     // sequence. Occurrences are never extended or trimmed to the document end;
@@ -3420,14 +3476,25 @@ fn export_layers_inner<'d>(
                 &record,
             )
             .map_err(|source| BuildError::Context {
-                context: record,
+                context: record.clone(),
                 source: Box::new(source),
             })?;
             if let Some((occurrence, source)) = exported {
-                context
+                let written = context
                     .media
                     .entry(occurrence.media.clone())
-                    .or_insert(source);
+                    .or_insert_with(|| source.clone());
+                if let (Some(existing), Some(mut requested)) = (&written.video, source.video) {
+                    if let Some(reason) = share_media_interpretation(existing, &mut requested) {
+                        omit_field(
+                            omissions,
+                            image.id,
+                            ExportField::InputTransform,
+                            &record,
+                            reason,
+                        );
+                    }
+                }
                 let animations = occurrence.animations.clone();
                 let track = super::cross_dissolve::place_picture(
                     &mut video_tracks,
@@ -3661,7 +3728,7 @@ fn export_layers_inner<'d>(
             Some(CanonicalMask::TrackMatte { source, .. }) => Some(*source),
             _ => None,
         };
-        let Some((occurrence, source)) = export_video_clip(
+        let Some((occurrence, mut source)) = export_video_clip(
             clip,
             video,
             parent,
@@ -3680,6 +3747,17 @@ fn export_layers_inner<'d>(
         };
         let descriptor_conflict = {
             let slot = &mut source_media(context.media, &occurrence.media).video;
+            if let Some(existing) = slot.as_ref() {
+                if let Some(reason) = share_media_interpretation(existing, &mut source) {
+                    omit_field(
+                        omissions,
+                        video.id,
+                        ExportField::InputTransform,
+                        &record,
+                        reason,
+                    );
+                }
+            }
             match slot {
                 Some(existing) if existing != &source => true,
                 Some(_) => false,
@@ -3893,23 +3971,40 @@ pub(super) fn export_video_clip(
         }
     };
     let source = &video.source;
-    for (changed, detail) in [
-        (source.time_remap.is_some(), ExportField::TimeRemap),
-        (
-            source.input_transform.is_some(),
-            ExportField::InputTransform,
-        ),
-    ] {
-        if changed {
-            omit_field(
-                omissions,
-                video.id,
-                detail,
-                record,
-                format!("{detail} was not exported"),
-            );
-        }
+    if source.time_remap.is_some() {
+        omit_field(
+            omissions,
+            video.id,
+            ExportField::TimeRemap,
+            record,
+            format!("{} was not exported", ExportField::TimeRemap),
+        );
     }
+    let (color_space_override, input_lut) =
+        source
+            .input_transform
+            .as_ref()
+            .map_or((None, None), |transform| {
+                let export = crate::export_loss::input_transform_export(
+                    transform,
+                    context.input_luts,
+                    true,
+                    context.aces,
+                );
+                if let Some(reason) = export.loss {
+                    omit_field(
+                        omissions,
+                        video.id,
+                        ExportField::InputTransform,
+                        record,
+                        reason,
+                    );
+                }
+                if export.input_lut.is_some() {
+                    crate::export_loss::report_clip_input_lut_interpolation(omissions, record);
+                }
+                (export.color_space_override, export.input_lut)
+            });
     if let Some(enhancement) = &source.audio_enhancement {
         let output = enhancement.enhanced_asset_id.as_str();
         let reason = if enhancement.enabled {
@@ -4507,7 +4602,10 @@ pub(super) fn export_video_clip(
             kind: PrMediaKind::Video {
                 codec: Some(facts.codec),
                 hdr_profile: facts.hdr_profile(),
+                color_space_override,
             },
+            input_lut,
+            camera_override: None,
         },
     )))
 }

@@ -258,22 +258,36 @@ pub(super) fn export_image_layer(
             );
         }
     }
-    for (changed, field, reason) in [
-        (
-            source.input_transform.is_some(),
-            ExportField::InputTransform,
-            "input transform was not exported",
-        ),
-        // An image ignores its legacy time remap, but the field is still lost.
-        (
-            source.time_remap.is_some(),
-            ExportField::TimeRemap,
-            "time remap was not exported",
-        ),
-    ] {
-        if changed {
-            omit_field(omissions, image.id, field, record, reason);
+    let input_lut = source.input_transform.as_ref().and_then(|transform| {
+        let export = crate::export_loss::input_transform_export(
+            transform,
+            context.input_luts,
+            false,
+            context.aces,
+        );
+        if let Some(reason) = export.loss {
+            omit_field(
+                omissions,
+                image.id,
+                ExportField::InputTransform,
+                record,
+                reason,
+            );
         }
+        if export.input_lut.is_some() {
+            crate::export_loss::report_clip_input_lut_interpolation(omissions, record);
+        }
+        export.input_lut
+    });
+    // An image ignores its legacy time remap, but the field is still lost.
+    if source.time_remap.is_some() {
+        omit_field(
+            omissions,
+            image.id,
+            ExportField::TimeRemap,
+            record,
+            "time remap was not exported",
+        );
     }
     if let Some(note) = facts.colour_note() {
         omit(omissions, OmissionScope::Feature, record, note);
@@ -435,6 +449,8 @@ pub(super) fn export_image_layer(
                 } else {
                     PrMediaKind::Still { alpha: facts.alpha }
                 },
+                input_lut,
+                camera_override: None,
             }),
             audio: None,
         },

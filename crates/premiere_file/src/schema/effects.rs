@@ -14,6 +14,12 @@ use super::{
     seconds, PrKeyframeEasing, PrPointKeyframe, PrScalarKeyframe, TICKS,
 };
 use crate::format::{ensure_valid, invalid, Result};
+use aftereffects_file::lumetri::{hue_curves::HueSatCurves, RgbCurves, Wheels};
+
+mod lumetri;
+mod lumetri_lut;
+pub(crate) use lumetri::*;
+pub(crate) use lumetri_lut::*;
 use std::{cmp::Ordering, collections::BTreeSet, ops::RangeInclusive};
 
 /// Maps a clip's components between their ascending `VideoComponentChain`
@@ -188,11 +194,15 @@ pub(crate) enum PrEffectParams {
     BrightnessContrast(PrBrightnessContrast),
     /// Import-only normalized Offset center; edited MotionTile uses linked export.
     Offset([f64; 2]),
-    /// Import-only selected Lumetri controls. Never serialize as native Lumetri;
-    /// edited FX exports through the linked-AEP route.
-    LumetriExposure(f64),
-    /// Import-only ProcAmp brightness; edited FX uses linked Exposure export.
-    ProcAmpBrightness(f64),
+    /// Lumetri Basic Correction and Creative scalars ([`PrLumetriGrade`]),
+    /// an FX `primaryGrade`.
+    LumetriGrade(PrLumetriGrade),
+    /// ProcAmp ([`PrProcAmp`]): an FX `exposure` (Hue 0, Contrast equal to
+    /// Saturation) or `hueSaturation` (Contrast 100), both ways.
+    ProcAmp(PrProcAmp),
+    /// Gamma Correction's whole Gamma (1 to 28): display codes raised to
+    /// Gamma/10, an FX `exposure` gamma of 10/Gamma, both ways.
+    GammaCorrection(f64),
     /// Import-only native effect, distinct from a graphic Appearance shadow.
     DropShadow {
         color: PrColour,
@@ -201,10 +211,26 @@ pub(crate) enum PrEffectParams {
         distance: f64,
         softness: f64,
     },
-    LumetriTemperature(f64),
-    LumetriTint(f64),
-    LumetriSaturation(f64),
+    /// Lumetri Vignette Amount, Midpoint and Feather, an FX `vignette`.
     LumetriVignette([f64; 3]),
+    /// Lumetri RGB Curves ([`RgbCurves`]), an FX `colorCurves`,
+    /// written as its own Lumetri Color.
+    LumetriCurves(RgbCurves),
+    /// Lumetri Color Wheels ([`Wheels`]), an FX `colorCurves`
+    /// following the measured per-channel wheel transfer; import-only, as
+    /// FX has no wheels operation.
+    LumetriWheels(Wheels),
+    /// Lumetri Hue Saturation Curves ([`HueSatCurves`]), an FX
+    /// `hueCurves` matched at reference colours
+    /// (`aftereffects_file::lumetri::hue_curves`), written as its own
+    /// Lumetri Color.
+    LumetriHueCurves(HueSatCurves),
+    /// Lumetri Basic Correction Input LUT with a custom `.cube`, an FX
+    /// source `inputTransform` (or a full-mix `lookTransform` after other
+    /// effects).
+    LumetriInputLut(PrLumetriLut),
+    /// Lumetri Creative Look with a custom `.cube`, an FX `lookTransform`.
+    LumetriLook(PrLumetriLook),
     Invert(PrInvert),
     FindEdges(PrFindEdges),
     Tint(PrTint),
@@ -1782,13 +1808,16 @@ impl PrEffect {
             PrEffectParams::Levels(_) => &LEVELS,
             PrEffectParams::BrightnessContrast(_) => &BRIGHTNESS_CONTRAST,
             PrEffectParams::Offset(_) => &OFFSET,
-            PrEffectParams::LumetriExposure(_) => &LUMETRI_EXPOSURE_SPEC,
-            PrEffectParams::ProcAmpBrightness(_) => &PROC_AMP,
+            PrEffectParams::LumetriGrade(_)
+            | PrEffectParams::LumetriVignette(_)
+            | PrEffectParams::LumetriCurves(_)
+            | PrEffectParams::LumetriWheels(_)
+            | PrEffectParams::LumetriHueCurves(_)
+            | PrEffectParams::LumetriInputLut(_)
+            | PrEffectParams::LumetriLook(_) => &LUMETRI,
+            PrEffectParams::ProcAmp(_) => &PROC_AMP,
+            PrEffectParams::GammaCorrection(_) => &GAMMA_CORRECTION,
             PrEffectParams::DropShadow { .. } => &DROP_SHADOW,
-            PrEffectParams::LumetriTemperature(_) => &LUMETRI_TEMPERATURE_SPEC,
-            PrEffectParams::LumetriTint(_) => &LUMETRI_TINT_SPEC,
-            PrEffectParams::LumetriSaturation(_) => &LUMETRI_SATURATION_SPEC,
-            PrEffectParams::LumetriVignette(_) => &LUMETRI_VIGNETTE_SPEC,
             PrEffectParams::Invert(_) => &INVERT,
             PrEffectParams::FindEdges(_) => &FIND_EDGES,
             PrEffectParams::Tint(_) => &TINT,
@@ -1836,17 +1865,33 @@ impl PrEffect {
                     ensure_valid!(param.value_range().is_some_and(|range| range.contains(value)), "Drop Shadow {} outside saved range", param.name);
                 }
             }
-            PrEffectParams::ProcAmpBrightness(value) => {
-                ensure_valid!(PROC_AMP_BRIGHTNESS.value_range().is_some_and(|range| range.contains(value)), "ProcAmp Brightness outside -100 to 100");
+            PrEffectParams::ProcAmp(proc_amp) => {
+                for (value, param) in proc_amp.values().iter().zip(&PROC_AMP.params[..4]) {
+                    ensure_valid!(param.value_range().is_some_and(|range| range.contains(value)), "ProcAmp {} {value} outside {} to {}", param.label, param.lower_bound, param.upper_bound);
+                }
+            }
+            PrEffectParams::GammaCorrection(gamma) => {
+                ensure_valid!(gamma.fract() == 0.0 && (1.0..=28.0).contains(gamma), "Gamma Correction Gamma {gamma} is not a whole number from 1 to 28");
             }
             PrEffectParams::LumetriVignette(values) => {
-                for (value, param) in values.iter().zip(LUMETRI_VIGNETTE_SPEC.params) {
+                for (value, param) in values.iter().zip(LUMETRI_VIGNETTE_PARAMS) {
                     ensure_valid!(param.value_range().is_some_and(|range| range.contains(value)), "Lumetri Vignette value outside saved range");
                 }
             }
-            PrEffectParams::LumetriExposure(value) | PrEffectParams::LumetriSaturation(value) | PrEffectParams::LumetriTemperature(value) | PrEffectParams::LumetriTint(value) => {
-                ensure_valid!(spec.params[0].value_range().is_some_and(|range| range.contains(value)), "Lumetri replacement value is outside its saved control range");
+            PrEffectParams::LumetriGrade(grade) => {
+                if let Some(reason) = grade.invalid_reason() {
+                    return Err(invalid(format!("Lumetri grade {reason}")));
+                }
             }
+            PrEffectParams::LumetriInputLut(lut) => {
+                ensure_valid!(lut.is_named(), "Lumetri Input LUT names no .cube");
+            }
+            PrEffectParams::LumetriLook(look) => ensure_valid!(
+                look.lut.is_named()
+                    && look.intensity.is_finite()
+                    && (0.0..=200.0).contains(&look.intensity),
+                "Lumetri Look needs a .cube and an Intensity from 0 to 200"
+            ),
             PrEffectParams::GaussianBlur(blur) => ensure_valid!(
                 blur.blurriness.is_finite()
                     && (0.0..=GAUSSIAN_BLUR_MAX_BLURRINESS).contains(&blur.blurriness),
@@ -1960,6 +2005,29 @@ impl PrEffect {
                 "Noise Amount of Noise must be finite and within 0 to 100"
             ),
             PrEffectParams::BlackWhite => {}
+            PrEffectParams::LumetriCurves(curves) => {
+                let bytes = curves
+                    .encode()
+                    .ok_or_else(|| invalid("Lumetri RGB curve has more than 32 points"))?;
+                if let Err(reason) = RgbCurves::decode(&bytes) {
+                    return Err(invalid(format!("Lumetri {reason}")));
+                }
+            }
+            PrEffectParams::LumetriHueCurves(curves) => {
+                let saved = curves
+                    .encode()
+                    .ok_or_else(|| invalid("Lumetri hue curve has more than 32 points"))?;
+                let bytes: [Option<&[u8]>; 5] =
+                    std::array::from_fn(|index| Some(saved[index].1.as_slice()));
+                if let Err(reason) = HueSatCurves::decode(bytes) {
+                    return Err(invalid(format!("Lumetri {reason}")));
+                }
+            }
+            PrEffectParams::LumetriWheels(wheels) => {
+                if let Err(reason) = Wheels::decode(&wheels.encode()) {
+                    return Err(invalid(format!("Lumetri {reason}")));
+                }
+            }
             // The colours are 8-bit by construction; the axis rule is the
             // reader's and the exporter's (`PrRamp::ensure_aligned`).
             PrEffectParams::Ramp(PrRamp {
@@ -2943,8 +3011,122 @@ pub(crate) const PROC_AMP_BRIGHTNESS: EffectParamSpec = EffectParamSpec {
     ..BRIGHTNESS_CONTRAST_BRIGHTNESS
 };
 
-/// Import-only saved ProcAmp layout. Only brightness has an editable mapping;
-/// the remaining controls must be static and neutral before admission.
+/// ProcAmp's Brightness, Contrast, Hue and Saturation with Split Screen off.
+/// Premiere 26.5.2 renders of 12 in-house settings on an 8-bit ramp measure
+/// it in BT.601 Y'CbCr on display codes: luma `Y' * Contrast/100 +
+/// Brightness/100` and `(Cb, Cr) = ((B - Y')/1.772, (R - Y')/1.402)` turned
+/// by Hue degrees (red towards yellow) and scaled by Saturation/100 — an
+/// affine display-RGB transform ([`Self::matrix`]), within 0.25 mean 8-bit
+/// codes of every probe (the floor of a free affine fit).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct PrProcAmp {
+    pub(crate) brightness: f64,
+    pub(crate) contrast: f64,
+    pub(crate) hue: f64,
+    pub(crate) saturation: f64,
+}
+
+impl PrProcAmp {
+    /// BT.601 luma weights.
+    const LUMA: [f64; 3] = [0.299, 0.587, 0.114];
+    /// BT.601 `B - Y'` and `R - Y'` per unit of Cb and Cr.
+    const CHROMA: [f64; 2] = [1.772, 1.402];
+
+    /// Brightness, Contrast, Hue and Saturation in native `Params` order.
+    pub(crate) fn values(&self) -> [f64; 4] {
+        [self.brightness, self.contrast, self.hue, self.saturation]
+    }
+
+    /// Whether it multiplies display RGB by Contrast/100 and adds
+    /// Brightness/100, exactly an FX `exposure`: no hue turn, and chroma
+    /// scaled like luma.
+    pub(crate) fn is_exposure(&self) -> bool {
+        self.hue == 0.0 && self.contrast == self.saturation && self.contrast > 0.0
+    }
+
+    /// The display-RGB rows `[red, green, blue, constant]` of each output
+    /// channel that this ProcAmp renders.
+    pub(crate) fn matrix(&self) -> [[f64; 4]; 3] {
+        let [wr, wg, wb] = Self::LUMA;
+        let [kb, kr] = Self::CHROMA;
+        let (sin, cos) = self.hue.to_radians().sin_cos();
+        let saturation = self.saturation / 100.0;
+        // Cb and Cr of an input, as rows over (R, G, B): Cb = (B - Y')/kb.
+        let cb = [-wr / kb, -wg / kb, (1.0 - wb) / kb];
+        let cr = [(1.0 - wr) / kr, -wg / kr, -wb / kr];
+        let turned: [[f64; 3]; 2] = std::array::from_fn(|row| {
+            std::array::from_fn(|column| {
+                saturation
+                    * if row == 0 {
+                        cos * cb[column] - sin * cr[column]
+                    } else {
+                        sin * cb[column] + cos * cr[column]
+                    }
+            })
+        });
+        // R - Y' = kr Cr, B - Y' = kb Cb, G - Y' from the luma constraint.
+        let red: [f64; 3] = std::array::from_fn(|column| kr * turned[1][column]);
+        let blue: [f64; 3] = std::array::from_fn(|column| kb * turned[0][column]);
+        let green: [f64; 3] =
+            std::array::from_fn(|column| -(wr * red[column] + wb * blue[column]) / wg);
+        let luma = Self::LUMA.map(|weight| self.contrast / 100.0 * weight);
+        let constant = self.brightness / 100.0;
+        [red, green, blue].map(|chroma| {
+            [
+                luma[0] + chroma[0],
+                luma[1] + chroma[1],
+                luma[2] + chroma[2],
+                constant,
+            ]
+        })
+    }
+
+    /// The ProcAmp whose [`Self::matrix`] is `rows` (within 1e-6), if any;
+    /// its Hue in -180 to 180.
+    pub(crate) fn from_matrix(rows: [[f64; 4]; 3]) -> Option<Self> {
+        let constant = rows[0][3];
+        let gains = rows.map(|row| row[0] + row[1] + row[2]);
+        if rows.iter().any(|row| (row[3] - constant).abs() > 1e-9)
+            || gains.iter().any(|gain| (gain - gains[0]).abs() > 1e-9)
+        {
+            return None;
+        }
+        let contrast = 100.0 * gains[0];
+        // The chroma part maps Cb (unit B - Y') and Cr to a turned, scaled
+        // pair: read it from the output Cb and Cr of the unit-chroma inputs.
+        let [_, wg, wb] = Self::LUMA;
+        let [kb, kr] = Self::CHROMA;
+        let input_cb = [0.0, -wb * kb / wg, kb];
+        let apply = |input: [f64; 3]| -> [f64; 2] {
+            let out: [f64; 3] =
+                std::array::from_fn(|channel| (0..3).map(|c| rows[channel][c] * input[c]).sum());
+            let y = Self::LUMA.iter().zip(out).map(|(w, v)| w * v).sum::<f64>();
+            [(out[2] - y) / kb, (out[0] - y) / kr]
+        };
+        let [cos_cb, sin_cb] = apply(input_cb);
+        let saturation = 100.0 * cos_cb.hypot(sin_cb);
+        let hue = sin_cb.atan2(cos_cb).to_degrees();
+        let candidate = Self {
+            brightness: 100.0 * constant,
+            contrast,
+            hue: if saturation > 0.0 { hue } else { 0.0 },
+            saturation,
+        };
+        let rebuilt = candidate.matrix();
+        let exact = rebuilt
+            .iter()
+            .flatten()
+            .zip(rows.iter().flatten())
+            .all(|(a, b)| (a - b).abs() <= 1e-6);
+        exact.then_some(candidate)
+    }
+}
+
+/// The declared approximation of an FX `hueSaturation` written as ProcAmp.
+pub(crate) const PROC_AMP_HUE_SATURATION_APPROXIMATION: &str = "hueSaturation exports as ProcAmp at Contrast 100 (Hue degrees, Saturation 100 + saturation, Brightness = lightness): lightness adds the same offset, but ProcAmp turns and scales BT.601 Y'CbCr chroma at constant luma (measured) while hueSaturation turns and scales HSV hue and saturation at constant value, so colours differ, most under large saturation changes";
+
+/// The saved ProcAmp layout, as Premiere 26.5.2 saves it. Brightness keys
+/// bind to an FX `exposure` offset; the other controls are static.
 pub(crate) const PROC_AMP: EffectSpec = EffectSpec {
     match_name: "AE.ADBE ProcAmp",
     display_name: "ProcAmp",
@@ -2975,8 +3157,14 @@ pub(crate) const PROC_AMP: EffectSpec = EffectSpec {
             binding: None,
             ..BRIGHTNESS_CONTRAST_CONTRAST
         },
+        // Split Screen: Premiere 26.5.2 saves this checkbox without a control
+        // type or bounds.
         EffectParamSpec {
             id: 5,
+            label: "Split Screen",
+            control: "",
+            lower_bound: "",
+            upper_bound: "",
             ..GAUSSIAN_BLUR_REPEAT_EDGE_PIXELS
         },
         EffectParamSpec {
@@ -2990,6 +3178,38 @@ pub(crate) const PROC_AMP: EffectSpec = EffectSpec {
         },
     ],
     ..BRIGHTNESS_CONTRAST
+};
+
+/// `PR.ADBE Gamma Correction`'s Gamma, a whole number saved like a Levels
+/// value (and repeated in the private data); 10 is neutral.
+pub(crate) const GAMMA_CORRECTION_GAMMA: EffectParamSpec = EffectParamSpec {
+    id: 1,
+    name: "Gamma",
+    label: "Gamma",
+    record: XmlRecordDefinition::new(
+        "VideoComponentParam",
+        "6e02e8bb-2569-46b2-8ab1-4ab11c43e9c8",
+        "10",
+    ),
+    control: "1",
+    lower_bound: "1",
+    upper_bound: "28",
+    lower_ui_bound: None,
+    upper_ui_bound: None,
+    discontinuous_interpolate: false,
+    binding: None,
+};
+
+/// `PR.ADBE Gamma Correction`, as Premiere 26.5.2 saves it. Premiere 26.5.2
+/// renders (Gamma 1, 5, 15, 25 on an 8-bit grey ramp) raise each display
+/// code to Gamma/10 (fitted exponents within 0.007).
+pub(crate) const GAMMA_CORRECTION: EffectSpec = EffectSpec {
+    match_name: "PR.ADBE Gamma Correction",
+    display_name: "Gamma Correction",
+    filter_type: "1",
+    params: &[GAMMA_CORRECTION_GAMMA],
+    premiere_native: true,
+    opaque_private_data: false,
 };
 
 pub(crate) const DROP_SHADOW: EffectSpec = EffectSpec {
@@ -3051,117 +3271,6 @@ pub(crate) const DROP_SHADOW: EffectSpec = EffectSpec {
             ..GAUSSIAN_BLUR_REPEAT_EDGE_PIXELS
         },
     ],
-    ..BRIGHTNESS_CONTRAST
-};
-
-// Import metadata only: these specs describe selected saved controls, not a
-// complete Lumetri record layout. The native writer explicitly rejects them.
-pub(crate) const LUMETRI_TEMPERATURE: EffectParamSpec = EffectParamSpec {
-    id: 7,
-    name: "Temperature",
-    label: "Lumetri saved Temperature",
-    lower_bound: "-300",
-    upper_bound: "300",
-    binding: Some(EffectParamBinding::ScaledScalar {
-        name: "temperature",
-        multiplier: 1.0 / 3.0,
-    }),
-    ..BRIGHTNESS_CONTRAST_CONTRAST
-};
-pub(crate) const LUMETRI_TINT: EffectParamSpec = EffectParamSpec {
-    id: 8,
-    name: "Tint",
-    label: "Lumetri saved Tint",
-    lower_bound: "-300",
-    upper_bound: "300",
-    binding: Some(EffectParamBinding::ScaledScalar {
-        name: "tint",
-        multiplier: -1.0 / 3.0,
-    }),
-    ..BRIGHTNESS_CONTRAST_CONTRAST
-};
-const LUMETRI_TEMPERATURE_SPEC: EffectSpec = EffectSpec {
-    match_name: "AE.ADBE Lumetri",
-    display_name: "Lumetri Temperature replacement",
-    params: &[LUMETRI_TEMPERATURE],
-    ..BRIGHTNESS_CONTRAST
-};
-const LUMETRI_TINT_SPEC: EffectSpec = EffectSpec {
-    match_name: "AE.ADBE Lumetri",
-    display_name: "Lumetri Tint replacement",
-    params: &[LUMETRI_TINT],
-    ..BRIGHTNESS_CONTRAST
-};
-pub(crate) const LUMETRI_EXPOSURE: EffectParamSpec = EffectParamSpec {
-    id: 11,
-    name: "Exposure",
-    label: "Lumetri saved Exposure",
-    lower_bound: "-5",
-    upper_bound: "5",
-    // A gamma-2.2 display approximation maps linear-light stops to code-value gain.
-    binding: Some(EffectParamBinding::ScaledScalar {
-        name: "exposure",
-        multiplier: 1.0 / 2.2,
-    }),
-    ..BRIGHTNESS_CONTRAST_CONTRAST
-};
-pub(crate) const LUMETRI_SATURATION: EffectParamSpec = EffectParamSpec {
-    id: 20,
-    name: "Saturation",
-    label: "Lumetri saved Saturation",
-    lower_bound: "0",
-    upper_bound: "200",
-    binding: Some(EffectParamBinding::Scalar("saturation")),
-    ..BRIGHTNESS_CONTRAST_CONTRAST
-};
-pub(crate) const LUMETRI_VIGNETTE_AMOUNT: EffectParamSpec = EffectParamSpec {
-    id: 51,
-    name: "Amount",
-    label: "Lumetri Vignette Amount",
-    lower_bound: "-5",
-    upper_bound: "5",
-    binding: None,
-    ..BRIGHTNESS_CONTRAST_CONTRAST
-};
-pub(crate) const LUMETRI_VIGNETTE_MIDPOINT: EffectParamSpec = EffectParamSpec {
-    id: 52,
-    name: "Midpoint",
-    label: "Lumetri Vignette Midpoint",
-    lower_bound: "0",
-    upper_bound: "100",
-    binding: None,
-    ..BRIGHTNESS_CONTRAST_CONTRAST
-};
-pub(crate) const LUMETRI_VIGNETTE_FEATHER: EffectParamSpec = EffectParamSpec {
-    id: 54,
-    name: "Feather",
-    label: "Lumetri Vignette Feather",
-    lower_bound: "0",
-    upper_bound: "100",
-    binding: None,
-    ..BRIGHTNESS_CONTRAST_CONTRAST
-};
-const LUMETRI_VIGNETTE_SPEC: EffectSpec = EffectSpec {
-    match_name: "AE.ADBE Lumetri",
-    display_name: "Lumetri Vignette replacement",
-    params: &[
-        LUMETRI_VIGNETTE_AMOUNT,
-        LUMETRI_VIGNETTE_MIDPOINT,
-        LUMETRI_VIGNETTE_FEATHER,
-    ],
-    ..BRIGHTNESS_CONTRAST
-};
-
-const LUMETRI_EXPOSURE_SPEC: EffectSpec = EffectSpec {
-    match_name: "AE.ADBE Lumetri",
-    display_name: "Lumetri Exposure replacement",
-    params: &[LUMETRI_EXPOSURE],
-    ..BRIGHTNESS_CONTRAST
-};
-const LUMETRI_SATURATION_SPEC: EffectSpec = EffectSpec {
-    match_name: "AE.ADBE Lumetri",
-    display_name: "Lumetri Saturation replacement",
-    params: &[LUMETRI_SATURATION],
     ..BRIGHTNESS_CONTRAST
 };
 
@@ -6129,5 +6238,55 @@ mod tests {
             transform(false, 70.0, 0.0, 0.0, (true, 0.0)).scale(),
             [70.0, 100.0]
         );
+    }
+}
+
+#[cfg(test)]
+mod proc_amp_tests {
+    use super::PrProcAmp;
+
+    /// The probe settings Premiere 26.5.2 rendered (12 settings; this
+    /// matrix within 0.25 mean 8-bit codes of each) decompose back to
+    /// their controls, and a non-ProcAmp mixer does not.
+    #[test]
+    fn proc_amp_matrix_decomposes_back_to_its_controls() {
+        for values in [
+            [20.0, 100.0, 0.0, 100.0],
+            [0.0, 150.0, 0.0, 100.0],
+            [0.0, 100.0, 30.0, 100.0],
+            [0.0, 100.0, -90.0, 100.0],
+            [0.0, 100.0, 0.0, 0.0],
+            [10.0, 120.0, 45.0, 130.0],
+            [-10.0, 80.0, -60.0, 70.0],
+        ] {
+            let [brightness, contrast, hue, saturation] = values;
+            let proc_amp = PrProcAmp {
+                brightness,
+                contrast,
+                hue,
+                saturation,
+            };
+            let back = PrProcAmp::from_matrix(proc_amp.matrix()).expect("a ProcAmp matrix");
+            for (a, b) in back.values().iter().zip(values) {
+                assert!((a - b).abs() < 1e-9, "{values:?} -> {back:?}");
+            }
+        }
+        // Identity Contrast/Saturation with Hue 0 is the identity matrix.
+        let identity = PrProcAmp {
+            brightness: 0.0,
+            contrast: 100.0,
+            hue: 0.0,
+            saturation: 100.0,
+        }
+        .matrix();
+        for (row, values) in identity.iter().enumerate() {
+            for (column, value) in values.iter().enumerate() {
+                let want = if row == column { 1.0 } else { 0.0 };
+                assert!((value - want).abs() < 1e-12, "{identity:?}");
+            }
+        }
+        let mut mixer = identity;
+        mixer[0][1] = 0.5;
+        assert_eq!(PrProcAmp::from_matrix(mixer), None);
     }
 }

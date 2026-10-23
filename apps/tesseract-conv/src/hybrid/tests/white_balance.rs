@@ -1,8 +1,9 @@
-//! Neutral saved white balance plus explicitly edited FX; structural proof only.
+//! FX Temperature/Tint on the pinned Lumetri host, explicitly authored (Lumetri
+//! import now yields one primaryGrade); linked AEP structural proof only.
 use super::*;
 
 #[test]
-fn human_lumetri_white_balance_edited_linked_export_retains_native_offset_keys() {
+fn temperature_tint_on_lumetri_host_linked_export_retains_native_offset_keys() {
     let parent = tempfile::tempdir().unwrap();
     let source = parent.path().join("source.prproj");
     let bytes = fs::read(fixture("human_lumetri_contrast.xml")).unwrap();
@@ -22,10 +23,11 @@ fn human_lumetri_white_balance_edited_linked_export_retains_native_offset_keys()
     let effects = document["composition"]["layers"][0]["effects"]
         .as_array_mut()
         .unwrap();
-    effects.retain(|effect| effect["effect"]["type"] == "temperatureTint");
-    assert_eq!(effects.len(), 2);
-    assert_eq!(effects[0]["effect"]["temperature"], 0.0);
-    assert_eq!(effects[1]["effect"]["tint"], 0.0);
+    assert_eq!(effects[0]["effect"]["type"], "primaryGrade");
+    *effects = vec![
+        json!({"id": 4, "enabled": true, "effect": {"type": "temperatureTint", "temperature": 0.0, "tint": 0.0}}),
+        json!({"id": 5, "enabled": true, "effect": {"type": "temperatureTint", "temperature": 0.0, "tint": 0.0}}),
+    ];
     let ids = [effects[0]["id"].clone(), effects[1]["id"].clone()];
     effects[0]["effect"]["temperature"] = json!(40.0);
     effects[1]["effect"]["tint"] = json!(-25.0);

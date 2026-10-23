@@ -1,0 +1,651 @@
+{
+ "schema": "color-fixtures-provenance/v1",
+ "scope": "Pinned single-feature Premiere colour fixtures authored natively through headless-adobe; references are direct Premiere renders (not AME). Structural/decision evidence only; no converter fidelity claim. References are not committed (local evidence only; no in-repo test consumes them): their hashes and authoring records are kept here.",
+ "lut": {
+  "repo_path": "crates/premiere_file/tests/fixtures/color_warm_tint.cube",
+  "size_bytes": 132736,
+  "sha256": "13772dfbbc8458b284eed36ba398d1660963da95c9a6a14ed5a08596dea3bbf3",
+  "generator": {
+   "repo_path": "crates/premiere_file/tests/fixtures/color_warm_tint_cube.py",
+   "size_bytes": 1100,
+   "sha256": "78e08f240b3975d2da1c3463f65431dc95777a6b2a28b2a2039e51aaafc21454"
+  }
+ },
+ "cases": [
+  {
+   "case": "color_clip_colorspace_override",
+   "feature": "Interpret Footage colour-space override of a Rec. 709 clip to Sony S-Log3/S-Gamut3.Cine",
+   "project": {
+    "repo_path": "crates/premiere_file/tests/fixtures/color_clip_colorspace_override.prproj",
+    "size_bytes": 10349,
+    "sha256": "0cc85719042c172d013515d5b8108c353328b1cf3ae53597429e5e74d9acc149",
+    "path_sanitization": {
+     "original_sha256": "15f9e2ca7abed3bfe2c95dad05ca4e681bd9b8d63a00277b2985f4bf72844ff4",
+     "note": "absolute private-job media/project paths replaced by /fixture-source/<padding>/<fixture>; RelativePath ./<fixture>; nothing else changed"
+    }
+   },
+   "media": [
+    {
+     "repo_path": "crates/premiere_file/tests/fixtures/feature_two_tracks_gap_clip_a.mp4",
+     "size_bytes": 26750,
+     "sha256": "93a5070a3a4cbbf685440c5dc1033b133baf70a9264a3a05c924518d84fa891a"
+    }
+   ],
+   "sequence_uid": "ba91dc24-6434-451d-ad76-3a0b18dbbdca",
+   "sequence_name": "Clip Colour Space Override",
+   "premiere_version": "26.5.2",
+   "authoring": {
+    "operation": "headless-adobe run_jsx (managed, native save + close + reopen readback)",
+    "script": {
+     "repo_path": "crates/premiere_file/tests/fixtures/color_clip_colorspace_override.author.jsx",
+     "size_bytes": 14812,
+     "sha256": "2cc854dcae575f55e5cb727b53fcc3ddbd012e64002f097b4e12d12c47b04893",
+     "comment_edit": {
+      "authored_sha256": "56807bf9787639518c221604d5c661f923fc7cb1a1a3f9b6e725162f63a83083",
+      "authored_size_bytes": 14827,
+      "note": "two internal-label comment lines reworded after authoring; no code changed"
+     }
+    },
+    "request_id": "color-hdr-e3-cs-override-author-v1",
+    "adobe_queue_job": 10643
+   },
+   "editable_assertions": {
+    "native_api": "ProjectItem.setOverrideColorSpace(<getOverrideColorSpaceList entry>) returned true; isValidOverrideColorSpace true",
+    "saved_xml": "<OverriddenColorSpace>{\"baseColorProfile\":{\"colorProfileName\":\"Sony S-Log3/S-Gamut3.Cine\"},\"baseProfileType\":1}</OverriddenColorSpace>; OriginalColorSpace BT.709,32f,Display-Referred",
+    "reopened_readback": "getOverrideColorSpace().name == \"Sony S-Log3/S-Gamut3.Cine\" (primaries 1012, transfer 1001, sceneReferred true); getOriginalColorSpace().name == \"Rec. 709\""
+   },
+   "reference": {
+    "file_name": "color_clip_colorspace_override.premiere-direct-v1.mp4",
+    "committed": false,
+    "local_evidence": true,
+    "size_bytes": 10009,
+    "sha256": "3435f270f04e9eb084cfe27399439bd2bddd65a35d0c82803a5bb9a269cfc90b",
+    "renderer": "Premiere lossless RGB + FFmpeg BT.709",
+    "request_id": "color-hdr-e3-color-clip-colorspace-override-render-v1",
+    "adobe_queue_job": 10646,
+    "rendered_from_sha256": "15f9e2ca7abed3bfe2c95dad05ca4e681bd9b8d63a00277b2985f4bf72844ff4",
+    "preset_sha256": "ba782c2ed88f92d6c01047d3fd3d4de0b21bbac90a3ba84f17090a37d010f11d",
+    "fps": 30,
+    "frame_count": 60,
+    "width": 1920,
+    "height": 1080
+   },
+   "measured": "frame 30 mean RGB (192x108 area) source clip [211.0, 39.0, 38.0] -> render [226.0, 55.0, 35.0], MAD 11.33: override changes the picture",
+   "proof_status": "structural_only: independent native source + direct Premiere render; not registered in tests/manifest.json (manifest admits only strict video_reference cases with AME provenance); no converter comparison run",
+   "wave5_render_note": "The reference frames are YUV-identical to the decoded source clip (framemd5 equal, all 60 frames): the override is not visible in this direct-render route. The earlier frame-30 RGB difference compared an untagged source (decoded with FFmpeg defaults) with a BT.709-tagged render. Our export of the fresh import (no override written) and our 29.97 fps export of an FX camera LUT (override written) both render identical to the reference, so the reference cannot discriminate the override (render_premiere jobs 10927, 10937)."
+  },
+  {
+   "case": "color_lumetri_basic",
+   "feature": "Lumetri Basic Correction tone + white balance + saturation scalars",
+   "project": {
+    "repo_path": "crates/premiere_file/tests/fixtures/color_lumetri_basic.prproj",
+    "size_bytes": 14483,
+    "sha256": "8b78978e027e9b1af0df8a5c06009edd7a8b9bce0c4a6948b94a8d48195ff4a1",
+    "path_sanitization": {
+     "original_sha256": "a707b71025f0e0f5bf3724731ea1a8b1eab6bc28400336ecda9e65f2a4933786",
+     "note": "absolute private-job media/project paths replaced by /fixture-source/<padding>/<fixture>; RelativePath ./<fixture>; nothing else changed"
+    }
+   },
+   "media": [
+    {
+     "repo_path": "crates/premiere_file/tests/fixtures/a1_bg_chart.png",
+     "size_bytes": 8663,
+     "sha256": "b679c8554208b55e04f4105ddf93db5601daa5f44b4211ec42d713f1005e9a7a"
+    }
+   ],
+   "sequence_uid": "5c919df6-dea9-4620-9eb3-611b6fc20602",
+   "sequence_name": "Lumetri Basic",
+   "premiere_version": "26.5.2",
+   "authoring": {
+    "operation": "headless-adobe run_jsx (managed, native save + close + reopen readback)",
+    "script": {
+     "repo_path": "crates/premiere_file/tests/fixtures/color_lumetri_basic.author.jsx",
+     "size_bytes": 12978,
+     "sha256": "449080f3e7ebe0c9ba1d0c81caee07850344f97390d2bf184291d6391f2d5114",
+     "comment_edit": {
+      "authored_sha256": "a4eb952388c39c98f265355d1978039853b4077fb2fe0a178bff5b6613733eec",
+      "authored_size_bytes": 12993,
+      "note": "two internal-label comment lines reworded after authoring; no code changed"
+     }
+    },
+    "request_id": "color-hdr-e3-lumetri-basic-author-v1",
+    "adobe_queue_job": 10648
+   },
+   "editable_assertions": {
+    "native_values": "Temperature 30, Tint -15, Saturation 130, Exposure 0.5, Contrast 30, Highlights -25, Shadows 25, Whites 15, Blacks -15 (ExtendScript property indices 14,15,16,19,20,21,22,23,24 of AE.ADBE Lumetri); every setValue returned true and reopened readback is identical",
+    "blob": "Lumetri Blob (ParameterID 1) saved as the FE FE sentinel (/v4=)"
+   },
+   "reference": {
+    "file_name": "color_lumetri_basic.premiere-direct-v1.mp4",
+    "committed": false,
+    "local_evidence": true,
+    "size_bytes": 10626,
+    "sha256": "f85820b6d10a8c60c512900ae99521956e0c9307af40b9623ca0c4f3f5759a5f",
+    "renderer": "Premiere lossless RGB + FFmpeg BT.709",
+    "request_id": "color-hdr-e3-color-lumetri-basic-render-v1",
+    "adobe_queue_job": 10651,
+    "rendered_from_sha256": "a707b71025f0e0f5bf3724731ea1a8b1eab6bc28400336ecda9e65f2a4933786",
+    "preset_sha256": "ba782c2ed88f92d6c01047d3fd3d4de0b21bbac90a3ba84f17090a37d010f11d",
+    "fps": 30,
+    "frame_count": 60,
+    "width": 1920,
+    "height": 1080
+   },
+   "measured": "frame 30 mean RGB chart [118.33, 128.33, 120.0] -> render [131.68, 144.3, 104.58], MAD 16.56",
+   "proof_status": "structural_only: independent native source + direct Premiere render; not registered in tests/manifest.json (manifest admits only strict video_reference cases with AME provenance); no converter comparison run"
+  },
+  {
+   "case": "color_hdr_pq_sequence",
+   "feature": "Rec. 2100 PQ sequence working space, project graphics white 203, one SDR picture with Lumetri Exposure +1",
+   "project": {
+    "repo_path": "crates/premiere_file/tests/fixtures/color_hdr_pq_sequence.prproj",
+    "size_bytes": 14544,
+    "sha256": "62bd85f16971ed2a6aa42642564186d9d4886777a0759c6b66529568d5bbf170",
+    "path_sanitization": {
+     "original_sha256": "d08234ffb4e2bd1136380d6bfe8747395151c0c81f4eea3f259940f2e71ae9f8",
+     "note": "absolute private-job media/project paths replaced by /fixture-source/<padding>/<fixture>; RelativePath ./<fixture>; nothing else changed"
+    }
+   },
+   "media": [
+    {
+     "repo_path": "crates/premiere_file/tests/fixtures/a1_bg_chart.png",
+     "size_bytes": 8663,
+     "sha256": "b679c8554208b55e04f4105ddf93db5601daa5f44b4211ec42d713f1005e9a7a"
+    }
+   ],
+   "sequence_uid": "5f9c5055-361b-417f-bd3b-bd91f2968057",
+   "sequence_name": "HDR PQ Sequence",
+   "premiere_version": "26.5.2",
+   "authoring": {
+    "operation": "headless-adobe run_jsx (managed, native save + close + reopen readback)",
+    "script": {
+     "repo_path": "crates/premiere_file/tests/fixtures/color_hdr_pq_sequence.author.jsx",
+     "size_bytes": 14737,
+     "sha256": "985069d240f61e8468947fd7d54e3380282cab0fee1d42cb3c4dd5ddd6eb5601",
+     "comment_edit": {
+      "authored_sha256": "ba3358060331c0e979d3d7ffd6b16958232ab5fbea94f1efb40750c3946dbfd8",
+      "authored_size_bytes": 14752,
+      "note": "two internal-label comment lines reworded after authoring; no code changed"
+     }
+    },
+    "request_id": "color-hdr-e3-hdr-pq-author-v1",
+    "adobe_queue_job": 10652
+   },
+   "editable_assertions": {
+    "native_api": "Sequence.setSettings(workingColorSpace = \"Rec. 2100 PQ\" entry of workingColorSpaceList) true; Project.setGraphicsWhiteLuminance(203) true; Lumetri Exposure (index 19) = 1",
+    "saved_xml": "WorkingColorSpace {\"baseColorProfile\":{\"colorProfileName\":\"BT.2100 PQ RGB Full\"}}; ColorManagementSettings graphicsWhiteLuminance 203 (project and sequence); IsGraphicsWhiteSameAsProject false",
+    "reopened_readback": "workingColorSpace \"Rec. 2100 PQ\", graphicsWhite 203, compositeLinearColor false (changed from true by the PQ working space), autoToneMapEnabled true",
+    "note": "graphics white 203 is also the observed new-project default on this host (before == 203), so this case does not discriminate 203 from the Premiere default; it does discriminate from the FX default 609"
+   },
+   "reference": {
+    "file_name": "color_hdr_pq_sequence.premiere-direct-pq-v1.mov",
+    "committed": false,
+    "local_evidence": true,
+    "size_bytes": 5542340,
+    "sha256": "638240ee13257289b56fe19f27bd82c90a791d3b38e750bcdc2457e02b44c548",
+    "renderer": "Sequence.exportAsMediaDirect",
+    "request_id": "color-hdr-e3-color-hdr-pq-sequence-render-hdr-v1",
+    "adobe_queue_job": 10653,
+    "rendered_from_sha256": "d08234ffb4e2bd1136380d6bfe8747395151c0c81f4eea3f259940f2e71ae9f8",
+    "preset_sha256": "3b80e9dd0a202b381e663c90e747d06b3dc2bc2d0c1aa874b9a7fb35eaba3355",
+    "fps": 30,
+    "frame_count": 60,
+    "width": 1920,
+    "height": 1080
+   },
+   "measured": "ProRes 422 HQ (apch) yuv422p10le, bt2020nc/smpte2084/bt2020, 30/1, 60 frames; frame 30 mean normalized PQ code RGB [0.5206, 0.5176, 0.4944], max 0.6863",
+   "proof_status": "structural_only: independent native source + direct Premiere render; not registered in tests/manifest.json (manifest admits only strict video_reference cases with AME provenance); no converter comparison run",
+   "hdr_route": "render_premiere_hdr (Sequence.exportAsMediaDirect) with private clone of installed \"Apple ProRes 422 HQ PQ.epr\" (sha256 5f39ce02514327f7ed0ef0d57d005c67b08a89eb470eeebf3b911f5ccebe5e5c) changing only ADBEVideoGraphicsWhiteLuminance 100 -> 203; 10-bit HEVC PQ route does not exist in headless-adobe (unrun)"
+  },
+  {
+   "case": "color_lumetri_look_cube",
+   "feature": "Lumetri Color Basic Correction > Input LUT and Creative > Look each browsed to the committed color_warm_tint.cube (Intensity 100, every other control default)",
+   "project": {
+    "repo_path": "crates/premiere_file/tests/fixtures/color_lumetri_look_cube.prproj",
+    "size_bytes": 32431,
+    "sha256": "031a4ac3e1bdc507818e199f873dab1f5809a773029393e0fa78cd035347cfd6",
+    "path_sanitization": {
+     "original_sha256": "3d16329741ff21d8c4043543b34015b079e8bb69af1dabf896801d6e7af5351b",
+     "original_size_bytes": 33835,
+     "note": "absolute authoring paths of the .cube, the project and the media replaced at equal length by /fixture-source/<padding>/<file> in the XML text, in the UTF-8 Blob shader graph and in the UTF-16LE Lumetri path slots (base64 lengths and BinaryHash sizes unchanged); media renamed a1_bg_chart.png (RelativePath ./a1_bg_chart.png); re-gzipped with mtime 0; nothing else changed"
+    }
+   },
+   "media": [
+    {
+     "repo_path": "crates/premiere_file/tests/fixtures/a1_bg_chart.png",
+     "size_bytes": 8663,
+     "sha256": "b679c8554208b55e04f4105ddf93db5601daa5f44b4211ec42d713f1005e9a7a"
+    }
+   ],
+   "lut_dependency": "crates/premiere_file/tests/fixtures/color_warm_tint.cube (the top-level lut entry); both slots name it",
+   "sequence_uid": "af04973b-c53f-4d20-aeb3-bf0e65b12dd6",
+   "premiere_version": "26.5.2",
+   "authoring": {
+    "operation": "human, Premiere 26.5.2 UI (Lumetri Color panel Browse... in both LUT slots), following the written single-control instructions; sequence 1920x1080 29.97 fps from the clip",
+    "scripted": false
+   },
+   "editable_assertions": {
+    "saved_xml": "ParameterID 4 (Input LUT path) = UTF-16LE absolute path + one NUL, base64; ParameterID 24 (Look path) = empty StartKeyframeValue with the same BinaryHash as ParameterID 4; popups 5 and 25 = 0; Look Intensity (26) = 100; Look Color Space (130) = 28; ParameterID 98 = 16-byte id + u32 length + ITX3 17^3 float table equal to the .cube samples; Blob (1) = UTF-8 shader graph naming the path in its Input LUT and Look LUT shaders",
+    "reopened_readback": "run_jsx readback (adobe jobs 10854 original, 10856 sanitized): 130 Lumetri controls; both path controls 62 characters, Input LUT and Look popups 0, Look Intensity 100; reopen unchanged"
+   },
+   "reference": {
+    "file_name": "color_lumetri_look_cube.premiere-direct-v1.mp4",
+    "committed": false,
+    "local_evidence": true,
+    "size_bytes": 21033,
+    "sha256": "1edbb16912f5545fd597f818a641c862bb4989e77ea2ba82921581f6b8920193",
+    "renderer": "Premiere lossless RGB + FFmpeg BT.709",
+    "request_id": "lane-a-w5-render-premiere-sanitized-v1",
+    "adobe_queue_job": 10855,
+    "rendered_from_sha256": "031a4ac3e1bdc507818e199f873dab1f5809a773029393e0fa78cd035347cfd6",
+    "preset_sha256": "ba782c2ed88f92d6c01047d3fd3d4de0b21bbac90a3ba84f17090a37d010f11d",
+    "fps": 29.97002997003,
+    "frame_count": 149,
+    "width": 1920,
+    "height": 1080,
+    "fps_note": "native sequence rate (human-authored at 29.97 fps); render_premiere has no frame-rate override, so this reference is not 30 fps"
+   },
+   "measured": "frame 30 vs chart.png with the .cube applied trilinearly in 8-bit code values: applied twice MAD 0.945/255, once 10.606, never 23.142 => Premiere applies the Input LUT and the Look to Rec. 709 display code values, one after the other; the unsanitized original renders the identical file (sha256 1edbb169...)",
+   "proof_status": "independent human-authored native source + direct Premiere render; not registered in tests/manifest.json (manifest admits only strict AME video_reference cases); import assertions in tests/conversion/color_lumetri_lut.rs"
+  },
+  {
+   "case": "color_clip_input_lut",
+   "feature": "Interpret Footage Input LUT (custom .cube browsed in Modify > Interpret Footage > Color Management) on a still, no effects",
+   "project": {
+    "repo_path": "crates/premiere_file/tests/fixtures/color_clip_input_lut.prproj",
+    "size_bytes": 25643,
+    "sha256": "a0787c1b939dd802ddc776d309111b86148cc2bb24ce4954e762341819250d78",
+    "path_sanitization": {
+     "original_sha256": "33dfd0f6bb2373d913d799f0398f1d8d726aa6cae2bd37b4936992854ac2f0d9",
+     "note": "equal-length replacement of the authoring media path (-> /fixture-source/<padding>/a1_bg_chart.png), project path and parent-directory settings; RelativePath ./a1_bg_chart.png (same bytes as the authored chart.png); gzip re-encoded; nothing else changed (the LUTAsset Blob holds only ITX3 samples)"
+    }
+   },
+   "media": [
+    {
+     "repo_path": "crates/premiere_file/tests/fixtures/a1_bg_chart.png",
+     "size_bytes": 8663,
+     "sha256": "b679c8554208b55e04f4105ddf93db5601daa5f44b4211ec42d713f1005e9a7a"
+    }
+   ],
+   "lut": {
+    "repo_path": "crates/premiere_file/tests/fixtures/color_warm_tint.cube",
+    "sha256": "13772dfbbc8458b284eed36ba398d1660963da95c9a6a14ed5a08596dea3bbf3"
+   },
+   "sequence_uid": "302bb7b5-d636-4913-b3ce-eb4fb7442310",
+   "sequence_name": "chart",
+   "premiere_version": "26.5.2",
+   "authoring": {
+    "operation": "human-authored in Premiere 26.5.2 UI (Modify > Interpret Footage > Color Management > Input LUT > Browse... color_warm_tint.cube; Color Space Override default; no effects)"
+   },
+   "editable_assertions": {
+    "saved_xml": "VideoStream (Version 23): InputLUTAsset ObjectRef -> LUTAsset (ClassID d72d54f3-d40e-486d-8784-6fe0703dbb8c, Version 1) with Id 1e5c67d0-db8e-8948-7a35-6be118c21ae0, Displayname color_warm_tint, Filename color_warm_tint.cube, Blob = base64 ITX3 table (ITX3, u32 17, u32 3, u32 0, f32x3 domain min 0, f32x3 max 1, 17^3 RGB f32 in .cube row order) equal to color_warm_tint.cube rows within 2.4e-8; InputLUTSpecified true, InputLUTID (same GUID), InputLUTDisplayName, InputLUTFileName; OriginalColorSpace BT.709 RGB Full; no OverriddenColorSpace; no file path saved",
+    "native_readback": "headless-adobe run_jsx (adobe job 10907, script clip_lut_readback.jsx sha256 7636f722…): ProjectItem.getInputLUTID() == 1e5c67d0-db8e-8948-7a35-6be118c21ae0 before relink; colour space Rec. 709, override empty; changeMediaPath resets getInputLUTID() to the nil GUID (also after save/reopen)"
+   },
+   "proof_status": "structural_only: human-authored native source + direct Premiere render; not registered in tests/manifest.json",
+   "reference": {
+    "file_name": "color_clip_input_lut.premiere-direct-v1.mp4",
+    "committed": false,
+    "local_evidence": true,
+    "size_bytes": 21036,
+    "sha256": "af9cf6071d6760502cfd0520f6ec32b44fa57d9aba88d31231bb7e95c02a10c1",
+    "renderer": "Premiere lossless RGB + FFmpeg BT.709",
+    "request_id": "p-w6-render-clip-input-lut-native-v1",
+    "adobe_queue_job": 11548,
+    "relink": "skip_when_resolved",
+    "rendered_from_sha256": "df08463bf78372d425296dc78db75674c2a86f3433bf067af60e85b7b065edac",
+    "rendered_from_note": "uncommitted render copy of the committed project whose saved ActualMediaFilePath/FilePath name the absolute path of the committed a1_bg_chart.png (nothing else changed)",
+    "color_readback": "getInputLUTID() = 1e5c67d0-db8e-8948-7a35-6be118c21ae0 at open, before and after export (relinked false)",
+    "fps": 29.97002997003,
+    "frame_count": 149,
+    "width": 1920,
+    "height": 1080
+   },
+   "measured": "graded native render file-identical (sha256 af9cf607...) to the Premiere renders of the Look-only and Input-LUT-only variants of color_lumetri_look_cube (one application of the .cube to Rec. 709 display code values); FX render of the fresh import vs it: MAD 0.39/255 (max 13); our 29.97 fps export renders file-identical, 30 fps 60/60 decoded-identical"
+  },
+  {
+   "case": "color_hdr_hlg_sequence",
+   "feature": "Rec. 2100 HLG sequence working space, project graphics white 203, one SDR picture with Lumetri Exposure +1",
+   "project": {
+    "repo_path": "crates/premiere_file/tests/fixtures/color_hdr_hlg_sequence.prproj",
+    "size_bytes": 14527,
+    "sha256": "7e6647d5ba3e74c697290dc48aac1228f7fb289bede6904e6f912d5096137d63",
+    "path_sanitization": {
+     "original_sha256": "cd7679800e0deb54dfd6aa9c0ba1966d77a16846de775e2661f2c9edeacf87e8",
+     "note": "absolute private-job media/project paths replaced by /fixture-source/<padding>/<fixture>; RelativePath ./<fixture>; nothing else changed"
+    }
+   },
+   "media": [
+    {
+     "repo_path": "crates/premiere_file/tests/fixtures/a1_bg_chart.png",
+     "size_bytes": 8663,
+     "sha256": "b679c8554208b55e04f4105ddf93db5601daa5f44b4211ec42d713f1005e9a7a"
+    }
+   ],
+   "sequence_uid": "45238be6-dbfc-46f6-b26f-2e2e0c50d82d",
+   "sequence_name": "HDR HLG Sequence",
+   "premiere_version": "26.5.2",
+   "authoring": {
+    "operation": "headless-adobe run_jsx (managed, native save + close + reopen readback)",
+    "script": {
+     "repo_path": "crates/premiere_file/tests/fixtures/color_hdr_hlg_sequence.author.jsx",
+     "size_bytes": 14739,
+     "sha256": "9557577e6b5f12bdf9d62440b35c8e9d9928f7d731f55c58ee17356c3b6d37b2"
+    },
+    "request_id": "lane-h-w5-pr-author-color-hdr-hlg-sequence-v2",
+    "adobe_queue_job": 10947,
+    "data": {
+     "sequence_name": "HDR HLG Sequence",
+     "working_space": "Rec. 2100 HLG",
+     "graphics_white": 203,
+     "targets": [
+      {
+       "index": 19,
+       "name": "Exposure",
+       "value": 1
+      }
+     ]
+    }
+   },
+   "editable_assertions": {
+    "native_api": "Sequence.setSettings(workingColorSpace = \"Rec. 2100 HLG\" entry of workingColorSpaceList) true; Project.setGraphicsWhiteLuminance(203) true; Lumetri Exposure (index 19) = 1",
+    "saved_xml": "WorkingColorSpace {\"baseColorProfile\":{\"colorProfileName\":\"BT.2100 HLG RGB Full\"}}; ColorManagementSettings graphicsWhiteLuminance 203 (project and sequence); IsGraphicsWhiteSameAsProject false; no OutputColorSpace / ToneMappingAlgorithm / GamutCompressionAlgorithm",
+    "reopened_readback": "workingColorSpace \"Rec. 2100 HLG\", graphicsWhite 203, compositeLinearColor false (true before the HLG working space), autoToneMapEnabled true, Exposure 1",
+    "note": "graphics white 203 is the Premiere HLG default on this host (before == 203); the case discriminates 203 from the FX default 609 only"
+   },
+   "reference": {
+    "file_name": "color_hdr_hlg_sequence.premiere-direct-hlg-v1.mov",
+    "committed": false,
+    "local_evidence": true,
+    "size_bytes": 5982020,
+    "sha256": "5a13fbc1575e48308120a315810b6dbecf556a4b3ad5033d529f46147b63fa9b",
+    "renderer": "Sequence.exportAsMediaDirect",
+    "request_id": "lane-h-w5-render-premiere-hdr-hlg-seq-native-v1",
+    "adobe_queue_job": 10993,
+    "rendered_from_sha256": "cd7679800e0deb54dfd6aa9c0ba1966d77a16846de775e2661f2c9edeacf87e8",
+    "preset_sha256": "586416f465e990224a788348f62b42407a5d1a7cf373b7a61a0cfb015b11814f",
+    "fps": 30,
+    "frame_count": 60,
+    "width": 1920,
+    "height": 1080
+   },
+   "measured": "ProRes 422 HQ (apch) yuv422p10le, bt2020nc/arib-std-b67/bt2020, 30/1, 60 frames; frame 30 mean Y code 548.17",
+   "converter_comparison": {
+    "export": "tsrct-conv (sha256 e189456398eb689597e6b378eb0384048ef2c82a2ed10c6bbed4a6b576482128, built at 94971429d9) convert <fresh import>.tsrct --to premiere --hdr hlg --fps 30",
+    "render_request_id": "lane-h-w5-render-premiere-hdr-hlg-seq-rt-v1",
+    "adobe_queue_job": 10994,
+    "render": {
+     "size_bytes": 5982020,
+     "sha256": "45b1045416455a25dbe52c431e76cfb49bf4938a18cb3ff0696d15c46a4a8758"
+    },
+    "result": "all 60 decoded frames identical to the reference (yuv422p10le, 10-bit MAD 0, max 0)"
+   },
+   "proof_status": "independent native source + direct Premiere HDR render; our fresh import exported with --hdr renders decoded-frame identical (see converter_comparison); not registered in tests/manifest.json (manifest admits only strict video_reference cases with AME provenance)",
+   "hdr_route": "render_premiere_hdr (Sequence.exportAsMediaDirect) with private clone of installed \"Apple ProRes 422 HQ HLG.epr\" (sha256 b3ed507b05d3ab4b55112ac25b004bdb23a10f84c177f64544eb53fdab0a95d5) changing only ADBEVideoGraphicsWhiteLuminance 100 -> 203"
+  },
+  {
+   "case": "color_hdr_pq_media",
+   "feature": "Rec. 2100 PQ sequence created from one in-house 10-bit HEVC PQ clip, project graphics white 203, no effects",
+   "project": {
+    "repo_path": "crates/premiere_file/tests/fixtures/color_hdr_pq_media.prproj",
+    "size_bytes": 10435,
+    "sha256": "a5e694e35dd3ffa1a2b3a05e67c28831259cd06dd15c1f217e446c4010218c03",
+    "path_sanitization": {
+     "original_sha256": "72a2ecae6432db5b45b44ba3aa69883a80cab63ba130dafc2e6d241e46a4aaf9",
+     "note": "absolute private-job media/project paths replaced by /fixture-source/<padding>/<fixture>; RelativePath ./<fixture>; nothing else changed"
+    }
+   },
+   "media": [
+    {
+     "repo_path": "crates/premiere_file/tests/fixtures/color_hdr_pq_clip.mp4",
+     "size_bytes": 14658,
+     "sha256": "a16f97ef340e0f35769ffe53d0ced2874d1fcb41deec70016b50403b69b2f803"
+    }
+   ],
+   "sequence_uid": "20d47a25-2573-4214-8782-d3a82f04e208",
+   "sequence_name": "HDR PQ Media",
+   "premiere_version": "26.5.2",
+   "authoring": {
+    "operation": "headless-adobe run_jsx (managed, native save + close + reopen readback)",
+    "script": {
+     "repo_path": "crates/premiere_file/tests/fixtures/color_hdr_media.author.jsx",
+     "size_bytes": 15175,
+     "sha256": "7f50fc527c89bbe6c8fccaa6d4eb14397f2a3cdb28091c76e44556aa4ad45768"
+    },
+    "request_id": "lane-h-w5-pr-author-color-hdr-pq-media-v1",
+    "adobe_queue_job": 10925,
+    "data": {
+     "sequence_name": "HDR PQ Media",
+     "working_space": "Rec. 2100 PQ",
+     "graphics_white": 203
+    }
+   },
+   "editable_assertions": {
+    "native_api": "sequence created from the clip; Sequence.setSettings(workingColorSpace \"Rec. 2100 PQ\") true; Project.setGraphicsWhiteLuminance(203) true; clip getOriginalColorSpace \"Rec. 2100 PQ\", no override",
+    "saved_xml": "WorkingColorSpace BT.2100 PQ RGB Full; ToneMappingAlgorithm 5, GamutCompressionAlgorithm saved, ToneMappingKnee 0.20000000298023224 (saved default); VideoStream OriginalColorSpace \"BT.2100 PQ,10-bit,Display-Referred\"; CodecType 1212503619"
+   },
+   "reference": {
+    "file_name": "color_hdr_pq_media.premiere-direct-pq-v1.mov",
+    "committed": false,
+    "local_evidence": true,
+    "size_bytes": 6424292,
+    "sha256": "70c8892b22726de17841c25c12d855e882865a3f68e6cb039ce7c00c04961ef3",
+    "renderer": "Sequence.exportAsMediaDirect",
+    "request_id": "lane-h-w5-render-premiere-hdr-pq-media-native-v1",
+    "adobe_queue_job": 10963,
+    "rendered_from_sha256": "72a2ecae6432db5b45b44ba3aa69883a80cab63ba130dafc2e6d241e46a4aaf9",
+    "preset_sha256": "3b80e9dd0a202b381e663c90e747d06b3dc2bc2d0c1aa874b9a7fb35eaba3355",
+    "fps": 30,
+    "frame_count": 60,
+    "width": 1920,
+    "height": 1080
+   },
+   "measured": "Premiere render vs source clip: 10-bit luma MAD 0.17, max 2; CbCr MAD 0.32 (4:2:0 source vs 4:2:2 output)",
+   "converter_comparison": {
+    "export": "tsrct-conv (sha256 e189456398eb689597e6b378eb0384048ef2c82a2ed10c6bbed4a6b576482128, built at 94971429d9) convert <fresh import>.tsrct --to premiere --hdr pq --fps 30",
+    "render_request_id": "lane-h-w5-render-premiere-hdr-pq-media-rt-v1",
+    "adobe_queue_job": 10966,
+    "render": {
+     "size_bytes": 6424292,
+     "sha256": "8e84fd78bee117490be83f8be7d8c5f47772d8b203fc5d3e33bdafa2888d1c0c"
+    },
+    "result": "all 60 decoded frames identical to the reference (yuv422p10le, 10-bit MAD 0, max 0); packaged media byte-identical to color_hdr_pq_clip.mp4"
+   },
+   "proof_status": "independent native source + direct Premiere HDR render; our fresh import exported with --hdr renders decoded-frame identical (see converter_comparison); not registered in tests/manifest.json (manifest admits only strict video_reference cases with AME provenance)",
+   "hdr_route": "render_premiere_hdr (Sequence.exportAsMediaDirect) with private clone of installed \"Apple ProRes 422 HQ PQ.epr\" (sha256 5f39ce02514327f7ed0ef0d57d005c67b08a89eb470eeebf3b911f5ccebe5e5c) changing only ADBEVideoGraphicsWhiteLuminance 100 -> 203"
+  },
+  {
+   "case": "color_hdr_hlg_media",
+   "feature": "Rec. 2100 HLG sequence created from one in-house 10-bit HEVC HLG clip, project graphics white 203, no effects",
+   "project": {
+    "repo_path": "crates/premiere_file/tests/fixtures/color_hdr_hlg_media.prproj",
+    "size_bytes": 10443,
+    "sha256": "50d7358282feaebbbdff8243a7fe5ebc3034028883895603f7fb404f981cee63",
+    "path_sanitization": {
+     "original_sha256": "fcbc7aac1a6b6c462b80b3a139a15c08cd24be9afcd5e536d7912da19759c180",
+     "note": "absolute private-job media/project paths replaced by /fixture-source/<padding>/<fixture>; RelativePath ./<fixture>; nothing else changed"
+    }
+   },
+   "media": [
+    {
+     "repo_path": "crates/premiere_file/tests/fixtures/color_hdr_hlg_clip.mp4",
+     "size_bytes": 12054,
+     "sha256": "632503700d0205ddba978ccac7a2e394345b013aac3bb08abb1cdab3d7db2608"
+    }
+   ],
+   "sequence_uid": "a24bd2f3-ae0f-4b0d-b318-f6ac8d5eeb6d",
+   "sequence_name": "HDR HLG Media",
+   "premiere_version": "26.5.2",
+   "authoring": {
+    "operation": "headless-adobe run_jsx (managed, native save + close + reopen readback)",
+    "script": {
+     "repo_path": "crates/premiere_file/tests/fixtures/color_hdr_media.author.jsx",
+     "size_bytes": 15175,
+     "sha256": "7f50fc527c89bbe6c8fccaa6d4eb14397f2a3cdb28091c76e44556aa4ad45768"
+    },
+    "request_id": "lane-h-w5-pr-author-color-hdr-hlg-media-v1",
+    "adobe_queue_job": 10926,
+    "data": {
+     "sequence_name": "HDR HLG Media",
+     "working_space": "Rec. 2100 HLG",
+     "graphics_white": 203
+    }
+   },
+   "editable_assertions": {
+    "native_api": "sequence created from the clip; Sequence.setSettings(workingColorSpace \"Rec. 2100 HLG\") true; Project.setGraphicsWhiteLuminance(203) true; clip getOriginalColorSpace \"Rec. 2100 HLG\", no override",
+    "saved_xml": "WorkingColorSpace BT.2100 HLG RGB Full; ToneMappingAlgorithm 5, ToneMappingKnee 0.18000000715255737 (saved default, differs from PQ); VideoStream OriginalColorSpace \"BT.2100 HLG,10-bit,Display-Referred\""
+   },
+   "reference": {
+    "file_name": "color_hdr_hlg_media.premiere-direct-hlg-v1.mov",
+    "committed": false,
+    "local_evidence": true,
+    "size_bytes": 6792404,
+    "sha256": "ea10eadc5cb2766d6beb6963f186e84227ed71e36cb380374980edf46fa003fc",
+    "renderer": "Sequence.exportAsMediaDirect",
+    "request_id": "lane-h-w5-render-premiere-hdr-hlg-media-native-v1",
+    "adobe_queue_job": 10970,
+    "rendered_from_sha256": "fcbc7aac1a6b6c462b80b3a139a15c08cd24be9afcd5e536d7912da19759c180",
+    "preset_sha256": "586416f465e990224a788348f62b42407a5d1a7cf373b7a61a0cfb015b11814f",
+    "fps": 30,
+    "frame_count": 60,
+    "width": 1920,
+    "height": 1080
+   },
+   "measured": "Premiere render vs source clip: 10-bit luma MAD 0.33, max 1; CbCr MAD 0.50 (4:2:0 source vs 4:2:2 output)",
+   "converter_comparison": {
+    "export": "tsrct-conv (sha256 e189456398eb689597e6b378eb0384048ef2c82a2ed10c6bbed4a6b576482128, built at 94971429d9) convert <fresh import>.tsrct --to premiere --hdr hlg --fps 30",
+    "render_request_id": "lane-h-w5-render-premiere-hdr-hlg-media-rt-v1",
+    "adobe_queue_job": 10971,
+    "render": {
+     "size_bytes": 6792404,
+     "sha256": "ffc0bb53da2046dbc1b8f994f604c48d9da5293fb05caf00c41934470b8ace88"
+    },
+    "result": "all 60 decoded frames identical to the reference (yuv422p10le, 10-bit MAD 0, max 0); packaged media byte-identical to color_hdr_hlg_clip.mp4"
+   },
+   "proof_status": "independent native source + direct Premiere HDR render; our fresh import exported with --hdr renders decoded-frame identical (see converter_comparison); not registered in tests/manifest.json (manifest admits only strict video_reference cases with AME provenance)",
+   "hdr_route": "render_premiere_hdr (Sequence.exportAsMediaDirect) with private clone of installed \"Apple ProRes 422 HQ HLG.epr\" (sha256 b3ed507b05d3ab4b55112ac25b004bdb23a10f84c177f64544eb53fdab0a95d5) changing only ADBEVideoGraphicsWhiteLuminance 100 -> 203"
+  },
+  {
+   "case": "color_aces_pr_sequence",
+   "feature": "ACEScct sequence working colour space (Color Setup), the in-house chart still with Lumetri Exposure +1 (0-2 s) and an in-house Sony S-Log3/S-Gamut3.Cine clip with an Interpret Footage Color Space Override (2-4 s)",
+   "project": {
+    "repo_path": "crates/premiere_file/tests/fixtures/color_aces_pr_sequence.prproj",
+    "size_bytes": 15286,
+    "sha256": "aba684731e624f88d3dad081d6932ccdccd6f70b9dcdea3999d5e650a5879520",
+    "path_sanitization": {
+     "original_sha256": "e0b56cd3cfbd1f5213102bc3b431871e0401afd1959359bf48feda00c695d127",
+     "note": "absolute private-job media/project paths replaced by equal-length /fixture-source/<padding>/<fixture> paths; RelativePath ./<fixture>; re-gzipped; nothing else changed"
+    }
+   },
+   "media": [
+    {
+     "repo_path": "crates/premiere_file/tests/fixtures/a1_bg_chart.png",
+     "size_bytes": 8663,
+     "sha256": "b679c8554208b55e04f4105ddf93db5601daa5f44b4211ec42d713f1005e9a7a"
+    },
+    {
+     "repo_path": "crates/premiere_file/tests/fixtures/color_aces_slog3_clip.mp4",
+     "size_bytes": 15554,
+     "sha256": "490ce2a397e48a94b81f34977d3cd73fba434288dad7f26b7b4de0ac1bc6589e"
+    }
+   ],
+   "sequence_uid": "866909df-d4ee-478f-8494-d437dd4ebf6d",
+   "sequence_name": "ACES Sequence",
+   "premiere_version": "26.5.2",
+   "authoring": {
+    "operation": "headless-adobe run_jsx (managed, native save + close + reopen readback)",
+    "script": {
+     "repo_path": "crates/premiere_file/tests/fixtures/color_aces_pr_sequence.author.jsx",
+     "size_bytes": 18449,
+     "sha256": "41ac64b5aa37202ea86a5c1d6f29db859267f72e991f29a24df8ba748da10145"
+    },
+    "request_id": "lane-x-w6-pr-author-color-aces-pr-sequence-v1",
+    "adobe_queue_job": 11550,
+    "data": {
+     "sequence_name": "ACES Sequence",
+     "working_space": "ACEScct",
+     "log_space": "Sony S-Log3/S-Gamut3.Cine",
+     "targets": [
+      {
+       "index": 19,
+       "name": "Exposure",
+       "value": 1
+      }
+     ]
+    }
+   },
+   "editable_assertions": {
+    "native_api": "Sequence.setSettings(workingColorSpace = \"ACEScct\" entry of workingColorSpaceList) true; ProjectItem.setOverrideColorSpace(\"Sony S-Log3/S-Gamut3.Cine\") true; Track.overwriteClip(log clip, 2 s) true; Lumetri Exposure (index 19) = 1",
+    "saved_xml": "VideoTrackGroup WorkingColorSpace {\"baseColorProfile\":{\"colorProfileName\":\"ACEScct\"},\"baseProfileType\":1}; WorkingColorSpaceConfiguration workingSpaceID ACEScct, not linearized; AutoInputGamutCompressionEnabled true; AllowLinearCompositing false; ToneMappingDesaturation 0.5; ColorManagementSettings autoToneMapEnabled true, graphicsWhiteLuminance 203; no OutputColorSpace / ToneMappingAlgorithm / GamutCompressionAlgorithm; log VideoStream OverriddenColorSpace Sony S-Log3/S-Gamut3.Cine + IsColorSpacOverridden true",
+    "reopened_readback": "workingColorSpace ACEScct (isSceneReferred true, primaries 1001, transfer 900); compositeLinearColor false (true before ACEScct); autoToneMapEnabled true; autoInputGamutCompressionEnabled true; log item colorSpace/override Sony S-Log3/S-Gamut3.Cine (primaries 1012, transfer 1001); Exposure 1",
+    "scriptable_controls": "Sequence settings autoToneMapEnabled and autoInputGamutCompressionEnabled are settable and persist (measurement variants, jobs 11603-11607); output colour space has no ExtendScript setter"
+   },
+   "reference": {
+    "file_name": "color_aces_pr_sequence.premiere-direct-v1.mp4",
+    "size_bytes": 18932,
+    "sha256": "3490808cff549dcdeae0c6e7c869fa3b02595201d85334946938695060205d40",
+    "committed": false,
+    "local_evidence": true,
+    "renderer": "Sequence.exportAsMediaDirect (render_premiere default MP4, relink skip_when_resolved)",
+    "request_id": "lane-x-w6-render-premiere-native-v1",
+    "adobe_queue_job": 11569,
+    "rendered_from_sha256": "e0b56cd3cfbd1f5213102bc3b431871e0401afd1959359bf48feda00c695d127",
+    "fps": 30,
+    "frame_count": 119,
+    "width": 1920,
+    "height": 1080,
+    "note": "not committed: no in-repo test consumes it; measured numbers are in the support ledger"
+   },
+   "proof_status": "independent native source + direct Premiere SDR render; converter import/export proof and measured gaps in docs/formats/premiere.md (ACES colour management)"
+  }
+ ],
+ "blocked": [],
+ "hdr_media": {
+  "note": "In-house 2 s 1920x1080 30 fps HEVC Main 10 clips of a1_bg_chart.png; the chart is encoded as BT.2020 PQ (SDR white 203 cd/m2) or HLG (BT.2408 reference white at signal 0.75) 16-bit RGB by the generator, then by FFmpeg 9.0.1 / libx265. Re-running both steps reproduced both clips byte-for-byte.",
+  "generator": {
+   "repo_path": "crates/premiere_file/tests/fixtures/color_hdr_clip_chart.py",
+   "size_bytes": 1888,
+   "sha256": "c7d99d0390e09ce0d6683123f25801a2eda2d015e03fcafb1e8728d71f0a635d"
+  },
+  "clips": [
+   {
+    "repo_path": "crates/premiere_file/tests/fixtures/color_hdr_pq_clip.mp4",
+    "size_bytes": 14658,
+    "sha256": "a16f97ef340e0f35769ffe53d0ced2874d1fcb41deec70016b50403b69b2f803",
+    "commands": [
+     "python3 color_hdr_clip_chart.py a1_bg_chart.png pq chart_pq.ppm",
+     "ffmpeg -hide_banner -loglevel error -y -loop 1 -framerate 30 -i chart_pq.ppm -t 2 -vf scale=out_color_matrix=bt2020:out_range=tv:flags=accurate_rnd+full_chroma_int,format=yuv420p10le,setparams=range=tv:color_primaries=bt2020:color_trc=smpte2084:colorspace=bt2020nc -c:v libx265 -preset slow -crf 18 -tag:v hvc1 -x265-params \"log-level=error:info=0:hdr10=1:hdr10-opt=0:repeat-headers=1:colorprim=bt2020:transfer=smpte2084:colormatrix=bt2020nc:range=limited:master-display=G(8500,39850)B(6550,2300)R(35400,14600)WP(15635,16450)L(10000000,1):max-cll=203,203:keyint=60\" -an -movflags +write_colr color_hdr_pq_clip.mp4"
+    ],
+    "metadata": "hvc1 Main 10 yuv420p10le tv bt2020nc/smpte2084/bt2020; ST 2086 G(0.17,0.797) B(0.131,0.046) R(0.708,0.292) WP D65, L 1000/0.0001 cd/m2; CTA-861.3 MaxCLL 203 MaxFALL 203"
+   },
+   {
+    "repo_path": "crates/premiere_file/tests/fixtures/color_hdr_hlg_clip.mp4",
+    "size_bytes": 12054,
+    "sha256": "632503700d0205ddba978ccac7a2e394345b013aac3bb08abb1cdab3d7db2608",
+    "commands": [
+     "python3 color_hdr_clip_chart.py a1_bg_chart.png hlg chart_hlg.ppm",
+     "ffmpeg -hide_banner -loglevel error -y -loop 1 -framerate 30 -i chart_hlg.ppm -t 2 -vf scale=out_color_matrix=bt2020:out_range=tv:flags=accurate_rnd+full_chroma_int,format=yuv420p10le,setparams=range=tv:color_primaries=bt2020:color_trc=arib-std-b67:colorspace=bt2020nc -c:v libx265 -preset slow -crf 18 -tag:v hvc1 -x265-params \"log-level=error:info=0:repeat-headers=1:colorprim=bt2020:transfer=arib-std-b67:colormatrix=bt2020nc:range=limited:keyint=60\" -an -movflags +write_colr color_hdr_hlg_clip.mp4"
+    ],
+    "metadata": "hvc1 Main 10 yuv420p10le tv bt2020nc/arib-std-b67/bt2020; no static HDR side data"
+   }
+  ]
+ },
+ "aces_media": {
+  "note": "In-house 2 s 1920x1080 30 fps HEVC Main 10 clip of a1_bg_chart.png encoded as Sony S-Log3 / S-Gamut3.Cine by the generator (sRGB EOTF, BT.709 -> S-Gamut3.Cine matrix from the published primaries, S-Log3 OETF, camera legal-range convention R'G'B' code = CV), then by FFmpeg 9.0.1 / libx265",
+  "generator": {
+   "repo_path": "crates/premiere_file/tests/fixtures/color_aces_slog3_clip.py",
+   "size_bytes": 1936,
+   "sha256": "d09954fffb370cf9468e435794dab95211ed049ad61f03818ccca1cc9a63a8e5"
+  },
+  "clip": {
+   "repo_path": "crates/premiere_file/tests/fixtures/color_aces_slog3_clip.mp4",
+   "size_bytes": 15554,
+   "sha256": "490ce2a397e48a94b81f34977d3cd73fba434288dad7f26b7b4de0ac1bc6589e",
+   "commands": [
+    "uv run --no-project --with numpy --with pillow python color_aces_slog3_clip.py a1_bg_chart.png chart_slog3.ppm",
+    "ffmpeg -hide_banner -loglevel error -y -loop 1 -framerate 30 -i chart_slog3.ppm -t 2 -vf scale=out_color_matrix=bt709:out_range=tv:flags=accurate_rnd+full_chroma_int,format=yuv420p10le,setparams=range=tv:color_primaries=bt709:color_trc=bt709:colorspace=bt709 -c:v libx265 -preset slow -crf 18 -tag:v hvc1 -x265-params \"log-level=error:info=0:repeat-headers=1:colorprim=bt709:transfer=bt709:colormatrix=bt709:range=limited:keyint=60\" -an -movflags +write_colr color_aces_slog3_clip.mp4"
+   ],
+   "metadata": "hvc1 Main 10 yuv420p10le tv bt709/bt709/bt709; S-Log3 CV 215..559 (no superwhite)",
+   "oracle": "OCIO 2.6 studio-config-v4.0.0_aces-v2.0_ocio-v2.5: S-Log3 S-Gamut3.Cine (CV/1023) -> Rec.1886 Rec.709 / ACES 2.0 SDR equals sRGB - Display (chart) -> the same view within MAD 0.6 (8-bit), so the clip encodes the chart's scene light"
+  }
+ }
+}

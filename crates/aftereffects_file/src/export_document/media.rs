@@ -6,8 +6,9 @@
 
 use fx_schema::{
     AssetId, AudioLayer, Dimensions, EffectData, EffectPayload, FrameBlendingMode, ImageLayer,
-    ImageSource, Layer, LayerData, LayerEffect, LayerId, MediaFit, MediaSourceKind, Position,
-    RectBounds, TimeRangeProperty, TimeRemapProperty, Transform, VideoLayer,
+    ImageSource, Layer, LayerData, LayerEffect, LayerId, MediaFit, MediaSourceKind,
+    PersistedInputTransform, Position, RectBounds, TimeRangeProperty, TimeRemapProperty, Transform,
+    VideoLayer,
     layer::{BlendMode, FrameBlendingData, LegacyMediaData, MediaFitData, TrackMatteType},
 };
 
@@ -53,6 +54,61 @@ pub(crate) struct ResolvedMediaSource {
     pub(crate) wave_metadata: Option<NativeWaveMetadata>,
     /// Independently established native movie source duration, without ms rounding.
     pub(crate) native_duration: Option<crate::media::MediaDuration>,
+}
+
+/// The colour input transform of a media layer's source, if any.
+pub(crate) fn source_input_transform(layer: &Layer) -> Option<&PersistedInputTransform> {
+    match layer.data() {
+        LayerData::Image(image) => {
+            let ImageSource::Asset(source) = &image.source;
+            source.input_transform.as_ref()
+        }
+        LayerData::Video(video) => video.source.input_transform.as_ref(),
+        LayerData::Media(media) => media.source.input_transform.as_ref(),
+        _ => None,
+    }
+}
+
+/// The omission diagnostic for a media source colour input transform on the
+/// half-canvas takeover route.
+///
+/// AE Adobe-engine projects have no per-footage LUT or camera interpretation.
+/// Ordinary footage occurrences carry an SDR-display 3D LUT as a head-of-stack
+/// Apply Color LUT (`super::apply_color_lut::lower_input_transform`); the
+/// takeover plan builds its own layers and writes the footage without it.
+pub(crate) fn input_transform_omission(layer: &Layer) -> Option<&'static str> {
+    source_input_transform(layer).map(|_| {
+        "source.inputTransform omitted: AE footage has no per-source LUT/camera interpretation and the half-canvas takeover placement writes no head-of-stack Apply Color LUT; footage written ungraded"
+    })
+}
+
+/// The `cameraInput` encoding of a media layer's `source.inputTransform`
+/// (an ACES camera declaration, kept opaque by the persisted reader).
+pub(crate) fn camera_input_encoding(layer: &Layer) -> Option<String> {
+    let transform = match layer.data() {
+        LayerData::Image(image) => {
+            let ImageSource::Asset(source) = &image.source;
+            source.input_transform.as_ref()
+        }
+        LayerData::Video(video) => video.source.input_transform.as_ref(),
+        LayerData::Media(media) => media.source.input_transform.as_ref(),
+        _ => None,
+    }?;
+    if let Some(fx_schema::InputColorTransform::CameraInput { input_encoding }) = transform
+        .as_supported()
+        .map(|transform| &transform.transform)
+    {
+        return Some(input_encoding.to_string());
+    }
+    let payload = transform.unsupported_payload()?;
+    (payload.pointer("/transform/type")? == "cameraInput")
+        .then(|| {
+            payload
+                .pointer("/transform/inputEncoding")?
+                .as_str()
+                .map(str::to_owned)
+        })
+        .flatten()
 }
 
 /// Returns the archive asset requested by a supported current media layer.
@@ -207,9 +263,6 @@ fn lower_image(
         layer.captions_enabled.is_none(),
         layer.corner_radius,
     )?;
-    if image_source.input_transform.is_some() {
-        return Err("Image Input Transform is a color LUT and has no native effect mapping");
-    }
     // Image source timeRemap is retained legacy metadata that current FX image
     // evaluation ignores. Keep ignoring it rather than changing still semantics.
     if !source.format.is_still()
@@ -313,9 +366,6 @@ fn lower_video(
     }
     if layer.source.eye_contact.is_some() || layer.source.audio_enhancement.is_some() {
         return Err("Video generated-source substitutions have no native source-selection mapping");
-    }
-    if layer.source.input_transform.is_some() {
-        return Err("Video Input Transform is a color LUT and has no native effect mapping");
     }
     if !matches!(
         source.format,
@@ -453,9 +503,6 @@ fn lower_legacy(
         layer.captions_enabled.is_none() && layer.caption_presentation.is_none(),
         layer.corner_radius,
     )?;
-    if layer.source.input_transform.is_some() {
-        return Err("Legacy Media Input Transform has no native LUT effect mapping");
-    }
     let fit = legacy_fit(layer.source.fit.as_ref())?;
     let geometry = source_geometry(
         source.dimensions,
@@ -787,6 +834,7 @@ fn media_spec(
         audio_enabled,
         audio_levels_db: [db; 2],
         audio_levels_animation: None,
+        ocio_input: None,
     })
 }
 

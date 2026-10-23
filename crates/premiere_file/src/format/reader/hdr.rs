@@ -28,6 +28,21 @@ pub(super) fn sequence(
     }
 }
 
+/// The `ToneMappingKnee` Premiere 26.5.2 saves by default on an admitted
+/// Rec.2100 sequence of that transfer; none is pinned for SDR sequences.
+pub(super) fn saved_default_tone_mapping_knee(
+    graph: &Graph<'_>,
+    video: &Located<VideoTrackGroup>,
+) -> Option<&'static str> {
+    admit(graph, video)
+        .ok()
+        .flatten()
+        .map(|hdr| match hdr.transfer {
+            fx_conv::HdrTransfer::Pq => records::TONE_MAPPING_KNEE_PQ,
+            fx_conv::HdrTransfer::Hlg => records::TONE_MAPPING_KNEE_HLG,
+        })
+}
+
 fn json(encoded: Option<&str>, field: &str) -> Result<Value> {
     serde_json::from_str(encoded.ok_or_else(|| unsupported(format!("missing {field}")))?)
         .map_err(Into::into)
@@ -57,8 +72,13 @@ fn admit(graph: &Graph<'_>, video: &Located<VideoTrackGroup>) -> Result<Option<S
     let transfer = working
         .rgb_hdr_transfer()
         .ok_or_else(|| unsupported("unknown working RGB domain"))?;
+    // Premiere 26.5.2 saves a natively authored Rec.2100 sequence without
+    // OutputColorSpace (`color_hdr_pq_sequence.prproj`); the generated
+    // explicit output profile must agree with the working space.
     ensure!(
-        output.as_ref().and_then(ColorSpace::output_hdr_transfer) == Some(transfer),
+        output
+            .as_ref()
+            .is_none_or(|output| output.output_hdr_transfer() == Some(transfer)),
         "working/output HDR profiles disagree or output payload is unknown"
     );
     let configuration = json(
@@ -86,10 +106,15 @@ fn admit(graph: &Graph<'_>, video: &Located<VideoTrackGroup>) -> Result<Option<S
             && configuration["workingSpaceIsLinearized"].as_u64() == Some(0),
         "working-space configuration does not declare the same nonlinear HDR domain"
     );
+    // The native PQ sequence saves neither algorithm (Premiere's defaults);
+    // generated sequences write 5 / 1. Neither is converted into FX.
     ensure!(
         fields.allow_linear_compositing.as_deref() == Some("false")
-            && fields.tone_mapping_algorithm.as_deref() == Some("5")
-            && fields.gamut_compression_algorithm.as_deref() == Some("1"),
+            && matches!(fields.tone_mapping_algorithm.as_deref(), None | Some("5"))
+            && matches!(
+                fields.gamut_compression_algorithm.as_deref(),
+                None | Some("1")
+            ),
         "unproved linear-compositing/tone/gamut controls"
     );
     ensure!(

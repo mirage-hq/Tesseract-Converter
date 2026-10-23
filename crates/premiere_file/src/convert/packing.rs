@@ -685,6 +685,7 @@ impl ContainerRecipe {
     fn empty_sequence(&self) -> PrSequence {
         PrSequence {
             hdr: self.header.hdr,
+            aces: None,
             native_frame_ticks: None,
             id: None,
             name: self.header.name.clone(),
@@ -696,6 +697,7 @@ impl ContainerRecipe {
             height: self.header.dimensions[1],
             timeline_end_ticks: self.header.timeline_end_ticks,
             adjustment_only_template: false,
+            empty_template_placeholder: false,
         }
     }
 }
@@ -1473,6 +1475,8 @@ fn foreign_item(
                         working_hdr: picture.working_hdr,
                     },
                 ),
+                input_lut: None,
+                camera_override: None,
             }),
             audio: None,
         },

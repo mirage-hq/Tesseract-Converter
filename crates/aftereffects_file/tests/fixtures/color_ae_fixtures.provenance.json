@@ -1,0 +1,2553 @@
+{
+ "schema": "color-ae-fixtures-provenance/v1",
+ "scope": "Pinned single-feature After Effects colour fixtures authored natively through headless-adobe run_jsx (AE 26.5x89), except color_ae_apply_color_lut and color_ae_lumetri_custom_lut, which were human-authored in the AE 26.5 UI; references are headless-adobe render_aep (aerender, 30 fps) H.264. Structural/decision evidence only; no converter fidelity claim. References are not committed (local evidence only; no in-repo test consumes them): their hashes and authoring records are kept here. AEP bytes are as saved natively except the footage alias path recorded under source.path_sanitization. Exception: color_ae_curves was human-authored in the AE 26.5 UI (no script can set a Curves curve).",
+ "licence": "Fixtures and references were authored in-house by the committed script color_ae_author.jsx from the repository's own a1_bg_chart.png chart; no third-party project or media is included. color_ae_rec2100_pq_project.aep embeds the Adobe 'Rec.2100 PQ' ICC profile that After Effects writes for its built-in working space; the converter binds it by SHA-256 only (e333f8242594ac5c29a9b68ca9b934baa5e06662b4882ee0fae02564ef10bee0, the same profile payload is already embedded in committed fixtures such as layers/track_matte_yes.aep) and the converter never writes it. color_ae_curves.aep was authored by hand in After Effects from the same chart image. color_ae_lumetri_custom_lut.aep was authored by hand in After Effects from the same chart image and the repository's in-house color_warm_tint.cube.",
+ "personal_metadata_review": "Reviewed: the only host-specific content was the absolute footage path inside each footage alias 'fullpath' JSON string (five fixtures), replaced as recorded under source.path_sanitization. XMP packets carry only creation/modification times, 'Adobe After Effects 2026 (Macintosh)' and random document/instance UUIDs; no user name, e-mail, host name or other path remains. color_ae_curves.aep: the only host-specific content was the same footage alias fullpath (replaced as recorded); its XMP holds only times, the tool string and random document/instance UUIDs. color_ae_lumetri_custom_lut.aep: the only host-specific content was the authoring folder in the footage alias fullpath, in the Lumetri Blob LUT paths and <embeddedlut> file names, and in the UTF-16 path slots (all replaced as recorded); its XMP holds only times, the tool string and random document/instance UUIDs.",
+ "proof_status_note": "Each case's proof_status records the state at authoring time. 'no converter comparison run' is superseded for the four effect cases (Lumetri, Color Balance, Channel Mixer, Selective Color) by the Adobe acceptance of converter exports recorded in docs/after-effects-support.md; Compositing Options and the Rec.2100 PQ project still have no converter comparison.",
+ "cases": [
+  {
+   "case": "color_ae_lumetri_basic",
+   "feature": "AE Lumetri Color Basic Correction tone + white balance + saturation scalars",
+   "source": {
+    "repo_path": "crates/aftereffects_file/tests/fixtures/color_ae_lumetri_basic.aep",
+    "size_bytes": 204849,
+    "sha256": "2bbdeffc4a93cc0d627bd8b94ce821548db227d12bdad4f1cfb158844dcd4d70",
+    "path_sanitization": {
+     "original_sha256": "5a1d17ae8755d644da07f6d7d2241c2b2db0a61f1be805d0dce3be0e16910af4",
+     "note": "absolute private-job footage path in the alias 'fullpath' JSON replaced by /fixture-source/<padding>/media.png of exactly the same byte length (RIFX chunk sizes unchanged); nothing else changed. reference.rendered_from_sha256 names the original bytes."
+    }
+   },
+   "media_dependencies": [
+    {
+     "authored_name": "media.png",
+     "repo_path": "crates/premiere_file/tests/fixtures/a1_bg_chart.png",
+     "size_bytes": 8663,
+     "sha256": "b679c8554208b55e04f4105ddf93db5601daa5f44b4211ec42d713f1005e9a7a"
+    }
+   ],
+   "composition_id": 1,
+   "composition_name": "Lumetri Basic",
+   "width": 1920,
+   "height": 1080,
+   "fps": 30,
+   "duration_seconds": 2,
+   "after_effects_version": "26.5x89",
+   "authoring": {
+    "operation": "headless-adobe run_jsx (managed AE, native save)",
+    "script": {
+     "repo_path": "crates/aftereffects_file/tests/fixtures/color_ae_author.jsx",
+     "size_bytes": 6405,
+     "sha256": "e95e2715870bcf90c7ee7e53aaf880a02398168a8a3e75eaefc971c079ec8d2d",
+     "ran_size_bytes": 6417,
+     "ran_sha256": "90d33796bd421ee93e145a2ed0b666734a8cd6d4383e92745d3589beb20e7fa4",
+     "note": "after the authoring runs only the first comment line changed (internal workstream labels removed); every code line is byte-identical to the revision that ran"
+    },
+    "request_id": "color-hdr-e3-color-ae-lumetri-basic-author-v2",
+    "adobe_queue_job": 10661,
+    "data": {
+     "comp_name": "Lumetri Basic",
+     "effects": [
+      {
+       "match_name": "ADBE Lumetri",
+       "values": [
+        {
+         "param": "ADBE Lumetri-0007",
+         "value": 30
+        },
+        {
+         "param": "ADBE Lumetri-0008",
+         "value": -15
+        },
+        {
+         "param": "ADBE Lumetri-0020",
+         "value": 130
+        },
+        {
+         "param": "ADBE Lumetri-0011",
+         "value": 0.5
+        },
+        {
+         "param": "ADBE Lumetri-0012",
+         "value": 30
+        },
+        {
+         "param": "ADBE Lumetri-0013",
+         "value": -25
+        },
+        {
+         "param": "ADBE Lumetri-0014",
+         "value": 25
+        },
+        {
+         "param": "ADBE Lumetri-0015",
+         "value": 15
+        },
+        {
+         "param": "ADBE Lumetri-0016",
+         "value": -15
+        }
+       ]
+      }
+     ],
+     "fixture": "color_ae_lumetri_basic"
+    }
+   },
+   "native_readback": {
+    "applied": [
+     {
+      "effect": "ADBE Lumetri",
+      "index": 1,
+      "values": [
+       {
+        "name": "Temperature",
+        "observed": 30,
+        "param": "ADBE Lumetri-0007",
+        "requested": 30,
+        "set": true
+       },
+       {
+        "name": "Tint",
+        "observed": -15,
+        "param": "ADBE Lumetri-0008",
+        "requested": -15,
+        "set": true
+       },
+       {
+        "name": "Saturation",
+        "observed": 130,
+        "param": "ADBE Lumetri-0020",
+        "requested": 130,
+        "set": true
+       },
+       {
+        "name": "Exposure",
+        "observed": 0.5,
+        "param": "ADBE Lumetri-0011",
+        "requested": 0.5,
+        "set": true
+       },
+       {
+        "name": "Contrast",
+        "observed": 30,
+        "param": "ADBE Lumetri-0012",
+        "requested": 30,
+        "set": true
+       },
+       {
+        "name": "Highlights",
+        "observed": -25,
+        "param": "ADBE Lumetri-0013",
+        "requested": -25,
+        "set": true
+       },
+       {
+        "name": "Shadows",
+        "observed": 25,
+        "param": "ADBE Lumetri-0014",
+        "requested": 25,
+        "set": true
+       },
+       {
+        "name": "Whites",
+        "observed": 15,
+        "param": "ADBE Lumetri-0015",
+        "requested": 15,
+        "set": true
+       },
+       {
+        "name": "Blacks",
+        "observed": -15,
+        "param": "ADBE Lumetri-0016",
+        "requested": -15,
+        "set": true
+       }
+      ]
+     }
+    ],
+    "compositionId": 1,
+    "compositionName": "Lumetri Basic",
+    "fixture": "color_ae_lumetri_basic",
+    "layer": "media.png",
+    "steps": {},
+    "version": "26.5x89"
+   },
+   "editable_assertions": "ADBE Lumetri-0007 Temperature 30, -0008 Tint -15, -0020 Saturation 130, -0011 Exposure 0.5, -0012 Contrast 30, -0013 Highlights -25, -0014 Shadows 25, -0015 Whites 15, -0016 Blacks -15; all setValue succeeded with identical readback",
+   "reference": {
+    "file_name": "color_ae_lumetri_basic__composition_1.direct-v1.mp4",
+    "committed": false,
+    "local_evidence": true,
+    "size_bytes": 18645,
+    "sha256": "1d9a704150382d5db7925a51791023c8474c3bc96a99ed40938dfcac8a739c68",
+    "renderer": "aerender",
+    "settings": {
+     "format": "mp4",
+     "fps": 30.0,
+     "start_frame": null,
+     "end_frame": null,
+     "audio": "native"
+    },
+    "request_id": "color-hdr-e3-color-ae-lumetri-basic-render-v1",
+    "adobe_queue_job": 10662,
+    "rendered_from_sha256": "5a1d17ae8755d644da07f6d7d2241c2b2db0a61f1be805d0dce3be0e16910af4",
+    "fps": 30,
+    "frame_count": 60,
+    "width": 1920,
+    "height": 1080
+   },
+   "measured": "frame 30 mean RGB chart [118.33,128.33,120.0] -> [131.67,144.34,104.45], MAD 16.69; vs Premiere color_lumetri_basic (same values) MAD 0.32",
+   "proof_status": "structural_only: independent native source + headless-adobe render_aep (aerender) reference; not registered in aep_video_references.json (its inventory test pins an exact count and an aerender CLI provenance schema); no converter comparison run"
+  },
+  {
+   "case": "color_ae_color_balance",
+   "feature": "Color Balance: shadows/midtones/highlights RGB balance, Preserve Luminosity on",
+   "source": {
+    "repo_path": "crates/aftereffects_file/tests/fixtures/color_ae_color_balance.aep",
+    "size_bytes": 86861,
+    "sha256": "dd45bbf3059eb01ca84ec92d6aa9f643fc86c2996ad73b8f8c165ad33f4e3959",
+    "path_sanitization": {
+     "original_sha256": "b4a81a8c3e3c367b7db67371605c75f86b341cef400eaa1101ab12746ae0be37",
+     "note": "absolute private-job footage path in the alias 'fullpath' JSON replaced by /fixture-source/<padding>/media.png of exactly the same byte length (RIFX chunk sizes unchanged); nothing else changed. reference.rendered_from_sha256 names the original bytes."
+    }
+   },
+   "media_dependencies": [
+    {
+     "authored_name": "media.png",
+     "repo_path": "crates/premiere_file/tests/fixtures/a1_bg_chart.png",
+     "size_bytes": 8663,
+     "sha256": "b679c8554208b55e04f4105ddf93db5601daa5f44b4211ec42d713f1005e9a7a"
+    }
+   ],
+   "composition_id": 1,
+   "composition_name": "Color Balance",
+   "width": 1920,
+   "height": 1080,
+   "fps": 30,
+   "duration_seconds": 2,
+   "after_effects_version": "26.5x89",
+   "authoring": {
+    "operation": "headless-adobe run_jsx (managed AE, native save)",
+    "script": {
+     "repo_path": "crates/aftereffects_file/tests/fixtures/color_ae_author.jsx",
+     "size_bytes": 6405,
+     "sha256": "e95e2715870bcf90c7ee7e53aaf880a02398168a8a3e75eaefc971c079ec8d2d",
+     "ran_size_bytes": 6417,
+     "ran_sha256": "90d33796bd421ee93e145a2ed0b666734a8cd6d4383e92745d3589beb20e7fa4",
+     "note": "after the authoring runs only the first comment line changed (internal workstream labels removed); every code line is byte-identical to the revision that ran"
+    },
+    "request_id": "color-hdr-e3-color-ae-color-balance-author-v2",
+    "adobe_queue_job": 10663,
+    "data": {
+     "comp_name": "Color Balance",
+     "effects": [
+      {
+       "match_name": "ADBE Color Balance 2",
+       "values": [
+        {
+         "param": "ADBE Color Balance 2-0003",
+         "value": 40
+        },
+        {
+         "param": "ADBE Color Balance 2-0004",
+         "value": 30
+        },
+        {
+         "param": "ADBE Color Balance 2-0008",
+         "value": -25
+        },
+        {
+         "param": "ADBE Color Balance 2-0010",
+         "value": 1
+        }
+       ]
+      }
+     ],
+     "fixture": "color_ae_color_balance"
+    }
+   },
+   "native_readback": {
+    "applied": [
+     {
+      "effect": "ADBE Color Balance 2",
+      "index": 1,
+      "values": [
+       {
+        "name": "Shadow Blue Balance",
+        "observed": 40,
+        "param": "ADBE Color Balance 2-0003",
+        "requested": 40,
+        "set": true
+       },
+       {
+        "name": "Midtone Red Balance",
+        "observed": 30,
+        "param": "ADBE Color Balance 2-0004",
+        "requested": 30,
+        "set": true
+       },
+       {
+        "name": "Highlight Green Balance",
+        "observed": -25,
+        "param": "ADBE Color Balance 2-0008",
+        "requested": -25,
+        "set": true
+       },
+       {
+        "name": "Preserve Luminosity",
+        "observed": 1,
+        "param": "ADBE Color Balance 2-0010",
+        "requested": 1,
+        "set": true
+       }
+      ]
+     }
+    ],
+    "compositionId": 1,
+    "compositionName": "Color Balance",
+    "fixture": "color_ae_color_balance",
+    "layer": "media.png",
+    "steps": {},
+    "version": "26.5x89"
+   },
+   "editable_assertions": "ADBE Color Balance 2-0003 Shadow Blue 40, -0004 Midtone Red 30, -0008 Highlight Green -25, -0010 Preserve Luminosity 1",
+   "reference": {
+    "file_name": "color_ae_color_balance__composition_1.direct-v1.mp4",
+    "committed": false,
+    "local_evidence": true,
+    "size_bytes": 18645,
+    "sha256": "d3d3730f1c2f84dacb939224fd9fe24fbaa4f74bfbc9904a9e746f8f88b38ac1",
+    "renderer": "aerender",
+    "settings": {
+     "format": "mp4",
+     "fps": 30.0,
+     "start_frame": null,
+     "end_frame": null,
+     "audio": "native"
+    },
+    "request_id": "color-hdr-e3-color-ae-color-balance-render-v1",
+    "adobe_queue_job": 10672,
+    "rendered_from_sha256": "b4a81a8c3e3c367b7db67371605c75f86b341cef400eaa1101ab12746ae0be37",
+    "fps": 30,
+    "frame_count": 60,
+    "width": 1920,
+    "height": 1080
+   },
+   "measured": "frame 30 mean RGB -> [108.85,96.67,124.19], MAD 20.56",
+   "proof_status": "structural_only: independent native source + headless-adobe render_aep (aerender) reference; not registered in aep_video_references.json (its inventory test pins an exact count and an aerender CLI provenance schema); no converter comparison run"
+  },
+  {
+   "case": "color_ae_channel_mixer",
+   "feature": "Channel Mixer: red output mixes green, blue constant",
+   "source": {
+    "repo_path": "crates/aftereffects_file/tests/fixtures/color_ae_channel_mixer.aep",
+    "size_bytes": 87395,
+    "sha256": "e7f85e5b1bb8c7cfb831a904ef48ba47472f4a35c9c829fad5ee5cae608c4bd6",
+    "path_sanitization": {
+     "original_sha256": "1f0ffc4b70579980282d91b48dae38752c036240676428b69e66aa62a7e1bcf5",
+     "note": "absolute private-job footage path in the alias 'fullpath' JSON replaced by /fixture-source/<padding>/media.png of exactly the same byte length (RIFX chunk sizes unchanged); nothing else changed. reference.rendered_from_sha256 names the original bytes."
+    }
+   },
+   "media_dependencies": [
+    {
+     "authored_name": "media.png",
+     "repo_path": "crates/premiere_file/tests/fixtures/a1_bg_chart.png",
+     "size_bytes": 8663,
+     "sha256": "b679c8554208b55e04f4105ddf93db5601daa5f44b4211ec42d713f1005e9a7a"
+    }
+   ],
+   "composition_id": 1,
+   "composition_name": "Channel Mixer",
+   "width": 1920,
+   "height": 1080,
+   "fps": 30,
+   "duration_seconds": 2,
+   "after_effects_version": "26.5x89",
+   "authoring": {
+    "operation": "headless-adobe run_jsx (managed AE, native save)",
+    "script": {
+     "repo_path": "crates/aftereffects_file/tests/fixtures/color_ae_author.jsx",
+     "size_bytes": 6405,
+     "sha256": "e95e2715870bcf90c7ee7e53aaf880a02398168a8a3e75eaefc971c079ec8d2d",
+     "ran_size_bytes": 6417,
+     "ran_sha256": "90d33796bd421ee93e145a2ed0b666734a8cd6d4383e92745d3589beb20e7fa4",
+     "note": "after the authoring runs only the first comment line changed (internal workstream labels removed); every code line is byte-identical to the revision that ran"
+    },
+    "request_id": "color-hdr-e3-color-ae-channel-mixer-author-v2",
+    "adobe_queue_job": 10664,
+    "data": {
+     "comp_name": "Channel Mixer",
+     "effects": [
+      {
+       "match_name": "ADBE CHANNEL MIXER",
+       "values": [
+        {
+         "param": "ADBE CHANNEL MIXER-0001",
+         "value": 70
+        },
+        {
+         "param": "ADBE CHANNEL MIXER-0002",
+         "value": 30
+        },
+        {
+         "param": "ADBE CHANNEL MIXER-0012",
+         "value": 10
+        }
+       ]
+      }
+     ],
+     "fixture": "color_ae_channel_mixer"
+    }
+   },
+   "native_readback": {
+    "applied": [
+     {
+      "effect": "ADBE CHANNEL MIXER",
+      "index": 1,
+      "values": [
+       {
+        "name": "Red-Red",
+        "observed": 70,
+        "param": "ADBE CHANNEL MIXER-0001",
+        "requested": 70,
+        "set": true
+       },
+       {
+        "name": "Red-Green",
+        "observed": 30,
+        "param": "ADBE CHANNEL MIXER-0002",
+        "requested": 30,
+        "set": true
+       },
+       {
+        "name": "Blue-Const",
+        "observed": 10,
+        "param": "ADBE CHANNEL MIXER-0012",
+        "requested": 10,
+        "set": true
+       }
+      ]
+     }
+    ],
+    "compositionId": 1,
+    "compositionName": "Channel Mixer",
+    "fixture": "color_ae_channel_mixer",
+    "layer": "media.png",
+    "steps": {},
+    "version": "26.5x89"
+   },
+   "editable_assertions": "ADBE CHANNEL MIXER-0001 Red-Red 70, -0002 Red-Green 30, -0012 Blue-Const 10 (Monochrome off)",
+   "reference": {
+    "file_name": "color_ae_channel_mixer__composition_1.direct-v1.mp4",
+    "committed": false,
+    "local_evidence": true,
+    "size_bytes": 18401,
+    "sha256": "42cd929e36c2aa0e6f4817f80a8329ac6694eacabbd6483eb976e091df78a848",
+    "renderer": "aerender",
+    "settings": {
+     "format": "mp4",
+     "fps": 30.0,
+     "start_frame": null,
+     "end_frame": null,
+     "audio": "native"
+    },
+    "request_id": "color-hdr-e3-color-ae-channel-mixer-render-v1",
+    "adobe_queue_job": 10673,
+    "rendered_from_sha256": "1f0ffc4b70579980282d91b48dae38752c036240676428b69e66aa62a7e1bcf5",
+    "fps": 30,
+    "frame_count": 60,
+    "width": 1920,
+    "height": 1080
+   },
+   "measured": "frame 30 mean RGB -> [118.69,126.33,143.78], MAD 14.02",
+   "proof_status": "structural_only: independent native source + headless-adobe render_aep (aerender) reference; not registered in aep_video_references.json (its inventory test pins an exact count and an aerender CLI provenance schema); no converter comparison run"
+  },
+  {
+   "case": "color_ae_selective_color",
+   "feature": "Selective Color (Relative): Reds Cyan -60 / Magenta +20, Blues Yellow -50",
+   "source": {
+    "repo_path": "crates/aftereffects_file/tests/fixtures/color_ae_selective_color.aep",
+    "size_bytes": 118423,
+    "sha256": "739829f4e4d07e7c1ac328b9e66210d9da4ea3a47de314591615878b67026bbd",
+    "path_sanitization": {
+     "original_sha256": "f66e080163d5649cc373f96b10e4c4a463fdfaacf2f2542e69ea78d0d0603923",
+     "note": "absolute private-job footage path in the alias 'fullpath' JSON replaced by /fixture-source/<padding>/media.png of exactly the same byte length (RIFX chunk sizes unchanged); nothing else changed. reference.rendered_from_sha256 names the original bytes."
+    }
+   },
+   "media_dependencies": [
+    {
+     "authored_name": "media.png",
+     "repo_path": "crates/premiere_file/tests/fixtures/a1_bg_chart.png",
+     "size_bytes": 8663,
+     "sha256": "b679c8554208b55e04f4105ddf93db5601daa5f44b4211ec42d713f1005e9a7a"
+    }
+   ],
+   "composition_id": 1,
+   "composition_name": "Selective Color",
+   "width": 1920,
+   "height": 1080,
+   "fps": 30,
+   "duration_seconds": 2,
+   "after_effects_version": "26.5x89",
+   "authoring": {
+    "operation": "headless-adobe run_jsx (managed AE, native save)",
+    "script": {
+     "repo_path": "crates/aftereffects_file/tests/fixtures/color_ae_author.jsx",
+     "size_bytes": 6405,
+     "sha256": "e95e2715870bcf90c7ee7e53aaf880a02398168a8a3e75eaefc971c079ec8d2d",
+     "ran_size_bytes": 6417,
+     "ran_sha256": "90d33796bd421ee93e145a2ed0b666734a8cd6d4383e92745d3589beb20e7fa4",
+     "note": "after the authoring runs only the first comment line changed (internal workstream labels removed); every code line is byte-identical to the revision that ran"
+    },
+    "request_id": "color-hdr-e3-color-ae-selective-color-author-v2",
+    "adobe_queue_job": 10665,
+    "data": {
+     "comp_name": "Selective Color",
+     "effects": [
+      {
+       "match_name": "ADBE SelectiveColor",
+       "values": [
+        {
+         "param": "ADBE SelectiveColor-0009",
+         "value": -60
+        },
+        {
+         "param": "ADBE SelectiveColor-0010",
+         "value": 20
+        },
+        {
+         "param": "ADBE SelectiveColor-0035",
+         "value": -50
+        }
+       ]
+      }
+     ],
+     "fixture": "color_ae_selective_color"
+    }
+   },
+   "native_readback": {
+    "applied": [
+     {
+      "effect": "ADBE SelectiveColor",
+      "index": 1,
+      "values": [
+       {
+        "name": "Cyan",
+        "observed": -60,
+        "param": "ADBE SelectiveColor-0009",
+        "requested": -60,
+        "set": true
+       },
+       {
+        "name": "Magenta",
+        "observed": 20,
+        "param": "ADBE SelectiveColor-0010",
+        "requested": 20,
+        "set": true
+       },
+       {
+        "name": "Yellow",
+        "observed": -50,
+        "param": "ADBE SelectiveColor-0035",
+        "requested": -50,
+        "set": true
+       }
+      ]
+     }
+    ],
+    "compositionId": 1,
+    "compositionName": "Selective Color",
+    "fixture": "color_ae_selective_color",
+    "layer": "media.png",
+    "steps": {},
+    "version": "26.5x89"
+   },
+   "editable_assertions": "ADBE SelectiveColor-0009 Reds Cyan -60, -0010 Reds Magenta 20, -0035 Blues Yellow -50; Method default 1 (Relative)",
+   "reference": {
+    "file_name": "color_ae_selective_color__composition_1.direct-v1.mp4",
+    "committed": false,
+    "local_evidence": true,
+    "size_bytes": 18411,
+    "sha256": "8a021c4e27bb7d4ad82ad6a86df472a52bc7c1aa200e3e3930481d7ebf7bc448",
+    "renderer": "aerender",
+    "settings": {
+     "format": "mp4",
+     "fps": 30.0,
+     "start_frame": null,
+     "end_frame": null,
+     "audio": "native"
+    },
+    "request_id": "color-hdr-e3-color-ae-selective-color-render-v1",
+    "adobe_queue_job": 10674,
+    "rendered_from_sha256": "f66e080163d5649cc373f96b10e4c4a463fdfaacf2f2542e69ea78d0d0603923",
+    "fps": 30,
+    "frame_count": 60,
+    "width": 1920,
+    "height": 1080
+   },
+   "measured": "frame 30 mean RGB -> [119.03,123.42,119.0], MAD 3.95 (only red/blue chart patches change)",
+   "proof_status": "structural_only: independent native source + headless-adobe render_aep (aerender) reference; not registered in aep_video_references.json (its inventory test pins an exact count and an aerender CLI provenance schema); no converter comparison run"
+  },
+  {
+   "case": "color_ae_effect_compositing_options",
+   "feature": "Effect Compositing Options: Levels with an effect mask reference and Effect Opacity 50",
+   "source": {
+    "repo_path": "crates/aftereffects_file/tests/fixtures/color_ae_effect_compositing_options.aep",
+    "size_bytes": 122483,
+    "sha256": "e2b36293bf74c31ddd0164cc90d759f4f455c9426705bbbcdfeb670062a3b8ba",
+    "path_sanitization": {
+     "original_sha256": "ada95f018aea2fca9f762a6002422961632746f00371a26f45d617efcb5fa66e",
+     "note": "absolute private-job footage path in the alias 'fullpath' JSON replaced by /fixture-source/<padding>/media.png of exactly the same byte length (RIFX chunk sizes unchanged); nothing else changed. reference.rendered_from_sha256 names the original bytes."
+    }
+   },
+   "media_dependencies": [
+    {
+     "authored_name": "media.png",
+     "repo_path": "crates/premiere_file/tests/fixtures/a1_bg_chart.png",
+     "size_bytes": 8663,
+     "sha256": "b679c8554208b55e04f4105ddf93db5601daa5f44b4211ec42d713f1005e9a7a"
+    }
+   ],
+   "composition_id": 1,
+   "composition_name": "Effect Compositing Options",
+   "width": 1920,
+   "height": 1080,
+   "fps": 30,
+   "duration_seconds": 2,
+   "after_effects_version": "26.5x89",
+   "authoring": {
+    "operation": "headless-adobe run_jsx (managed AE, native save)",
+    "script": {
+     "repo_path": "crates/aftereffects_file/tests/fixtures/color_ae_author.jsx",
+     "size_bytes": 6405,
+     "sha256": "e95e2715870bcf90c7ee7e53aaf880a02398168a8a3e75eaefc971c079ec8d2d",
+     "ran_size_bytes": 6417,
+     "ran_sha256": "90d33796bd421ee93e145a2ed0b666734a8cd6d4383e92745d3589beb20e7fa4",
+     "note": "after the authoring runs only the first comment line changed (internal workstream labels removed); every code line is byte-identical to the revision that ran"
+    },
+    "request_id": "color-hdr-e3-color-ae-effect-compositing-options-author-v2",
+    "adobe_queue_job": 10666,
+    "data": {
+     "comp_name": "Effect Compositing Options",
+     "effects": [
+      {
+       "match_name": "ADBE Pro Levels2",
+       "values": [
+        {
+         "param": "ADBE Pro Levels2-0006",
+         "value": 0.5
+        }
+       ]
+      }
+     ],
+     "compositing": {
+      "mask_vertices": [
+       [
+        0,
+        0
+       ],
+       [
+        960,
+        0
+       ],
+       [
+        960,
+        1080
+       ],
+       [
+        0,
+        1080
+       ]
+      ],
+      "effect_opacity": 50,
+      "mask_reference_candidates": [
+       "ADBE Effect Mask",
+       "ADBE Effect Mask Reference 1",
+       "ADBE Effect Mask Ref"
+      ]
+     },
+     "fixture": "color_ae_effect_compositing_options"
+    }
+   },
+   "native_readback": {
+    "applied": [
+     {
+      "effect": "ADBE Pro Levels2",
+      "index": 1,
+      "values": [
+       {
+        "name": "Gamma",
+        "observed": 0.5,
+        "param": "ADBE Pro Levels2-0006",
+        "requested": 0.5,
+        "set": true
+       }
+      ]
+     }
+    ],
+    "compositionId": 1,
+    "compositionName": "Effect Compositing Options",
+    "fixture": "color_ae_effect_compositing_options",
+    "layer": "media.png",
+    "steps": {
+     "compositing": {
+      "builtInParams": [
+       "ADBE Effect Mask Parade:Masks",
+       "ADBE Effect Mask Opacity:Effect Opacity",
+       "ADBE Force CPU GPU:GPU Rendering"
+      ],
+      "canAdd": {
+       "ADBE Effect Mask": true,
+       "ADBE Effect Mask Ref": false,
+       "ADBE Effect Mask Reference 1": false
+      },
+      "maskIndex": 1,
+      "maskMode": "6812",
+      "maskReference": {
+       "children": [
+        "ADBE Effect Path Stream Ref:Mask Reference 1"
+       ],
+       "matchName": "ADBE Effect Mask",
+       "value": 1
+      },
+      "opacity": 50
+     }
+    },
+    "version": "26.5x89"
+   },
+   "editable_assertions": "Layer mask 1 rectangle x 0..960 (mode None); ADBE Pro Levels2-0006 Gamma 0.5; Compositing Options (ADBE Effect Built In Params): ADBE Effect Mask Opacity 50, ADBE Effect Mask Parade > ADBE Effect Mask > ADBE Effect Path Stream Ref \"Mask Reference 1\" = 1",
+   "reference": {
+    "file_name": "color_ae_effect_compositing_options__composition_1.direct-v1.mp4",
+    "committed": false,
+    "local_evidence": true,
+    "size_bytes": 18399,
+    "sha256": "70c1bdc3efb90370b2f1580f2507c62de2551ebcaff6cf95d7497e81db5cb734",
+    "renderer": "aerender",
+    "settings": {
+     "format": "mp4",
+     "fps": 30.0,
+     "start_frame": null,
+     "end_frame": null,
+     "audio": "native"
+    },
+    "request_id": "color-hdr-e3-color-ae-effect-compositing-options-render-v1",
+    "adobe_queue_job": 10675,
+    "rendered_from_sha256": "ada95f018aea2fca9f762a6002422961632746f00371a26f45d617efcb5fa66e",
+    "fps": 30,
+    "frame_count": 60,
+    "width": 1920,
+    "height": 1080
+   },
+   "measured": "frame 30: left (inside mask) and right (outside mask) halves both darken identically (chart 122.22 -> 96.47 mean in each half; MAD 25.76 per half) => the aerender reference does NOT show the effect restricted to the mask; cause unverified (mask restriction not honoured in this render, or reference semantics differ). Opacity vs mask contribution cannot be separated from this reference.",
+   "proof_status": "structural_only: independent native source + headless-adobe render_aep (aerender) reference; not registered in aep_video_references.json (its inventory test pins an exact count and an aerender CLI provenance schema); no converter comparison run"
+  },
+  {
+   "case": "color_ae_rec2100_pq_project",
+   "feature": "Project working space Rec.2100 PQ, 32 bpc, one solid above white",
+   "source": {
+    "repo_path": "crates/aftereffects_file/tests/fixtures/color_ae_rec2100_pq_project.aep",
+    "size_bytes": 114519,
+    "sha256": "1be8348f26fdca009d01fce9f9efac4f26d840ae942dfcbc8f2305caa42cb465"
+   },
+   "media_dependencies": [],
+   "composition_id": 1,
+   "composition_name": "Rec2100 PQ Project",
+   "width": 1920,
+   "height": 1080,
+   "fps": 30,
+   "duration_seconds": 2,
+   "after_effects_version": "26.5x89",
+   "authoring": {
+    "operation": "headless-adobe run_jsx (managed AE, native save)",
+    "script": {
+     "repo_path": "crates/aftereffects_file/tests/fixtures/color_ae_author.jsx",
+     "size_bytes": 6405,
+     "sha256": "e95e2715870bcf90c7ee7e53aaf880a02398168a8a3e75eaefc971c079ec8d2d",
+     "ran_size_bytes": 6417,
+     "ran_sha256": "90d33796bd421ee93e145a2ed0b666734a8cd6d4383e92745d3589beb20e7fa4",
+     "note": "after the authoring runs only the first comment line changed (internal workstream labels removed); every code line is byte-identical to the revision that ran"
+    },
+    "request_id": "color-hdr-e3-color-ae-rec2100-pq-project-author-v2",
+    "adobe_queue_job": 10667,
+    "data": {
+     "comp_name": "Rec2100 PQ Project",
+     "project_color": {
+      "working_space": "Rec.2100 PQ",
+      "bits_per_channel": 32
+     },
+     "solid_color": [
+      2,
+      2,
+      2
+     ],
+     "effects": [],
+     "fixture": "color_ae_rec2100_pq_project"
+    }
+   },
+   "native_readback": {
+    "applied": [],
+    "compositionId": 1,
+    "compositionName": "Rec2100 PQ Project",
+    "fixture": "color_ae_rec2100_pq_project",
+    "layer": "Solid",
+    "steps": {
+     "bitsPerChannel": 32,
+     "linearBlending": false,
+     "listColorProfiles": [
+      "Adobe RGB (1998)",
+      "Apple RGB",
+      "ColorMatch RGB",
+      "image P3",
+      "ProPhoto RGB",
+      "sRGB IEC61966-2.1",
+      "ACES Academy Color Encoding Specification SMPTE ST 2065-1",
+      "ACES CG Linear (Academy Color Encoding System AP1)",
+      "ACEScct",
+      "ACEScg ACES Working Space AMPAS S-2014-004",
+      "ARRI LogC3 Wide Color Gamut - EI 1000",
+      "ARRI LogC3 Wide Color Gamut - EI 1280",
+      "ARRI LogC3 Wide Color Gamut - EI 160",
+      "ARRI LogC3 Wide Color Gamut - EI 1600",
+      "ARRI LogC3 Wide Color Gamut - EI 200",
+      "ARRI LogC3 Wide Color Gamut - EI 250",
+      "ARRI LogC3 Wide Color Gamut - EI 320",
+      "ARRI LogC3 Wide Color Gamut - EI 400",
+      "ARRI LogC3 Wide Color Gamut - EI 500",
+      "ARRI LogC3 Wide Color Gamut - EI 640",
+      "ARRI LogC3 Wide Color Gamut - EI 800",
+      "ARRI WCG Preview LUT for P3",
+      "ARRI WCG Preview LUT for P3D65",
+      "ARRI WCG Preview LUT for Rec. 709",
+      "ARRIFLEX D-20 Daylight Log (by Adobe)",
+      "ARRIFLEX D-20 Tungsten Log (by Adobe)",
+      "Canon Cinema CLog2",
+      "Canon Cinema CLog3",
+      "CIE RGB",
+      "DCDM X'Y'Z' D55 Gamma 2.6",
+      "DCDM X'Y'Z' D60 Gamma 2.6",
+      "DCDM X'Y'Z' D65 Gamma 2.6",
+      "DCDM X'Y'Z' DCI Gamma 2.6",
+      "Display",
+      "Display P3",
+      "e-sRGB",
+      "Fujifilm 3510 (RDI) Theater Preview (by Adobe)",
+      "Fujifilm 3513DI (RDI) Theater Preview (by Adobe)",
+      "Fujifilm 3521XD (RDI) Theater Preview (by Adobe)",
+      "Fujifilm ETERNA 250 Printing Density (by Adobe)",
+      "Fujifilm ETERNA 250D Printing Density (by Adobe)",
+      "Fujifilm ETERNA 400 Printing Density (by Adobe)",
+      "Fujifilm ETERNA 500 Printing Density (by Adobe)",
+      "Fujifilm ETERNA Vivid 160 Printing Density (by Adobe)",
+      "Fujifilm F-125 Printing Density (by Adobe)",
+      "Fujifilm F-64D Printing Density (by Adobe)",
+      "Fujifilm REALA 500D Printing Density (by Adobe)",
+      "Generic RGB Profile",
+      "HD 709-A",
+      "HDTV (Rec. 709) 16-235",
+      "Kodak 2383 Theater Preview 2 (by Adobe)",
+      "Kodak 2393 Theater Preview 2 (by Adobe)",
+      "Kodak 2395 Theater Preview 2 (by Adobe)",
+      "Kodak 5205/7205 Printing Density (by Adobe)",
+      "Kodak 5218/7218 Printing Density (by Adobe)",
+      "Kodak 5229/7229 Printing Density (by Adobe)",
+      "LS27F32xG",
+      "P3 D55 Gamma 2.6",
+      "P3 D60 Gamma 2.6",
+      "P3 D65 Gamma 2.4",
+      "P3 D65 Gamma 2.6",
+      "P3 D65 PQ",
+      "P3 D65 PQ W100",
+      "P3 D65 PQ W203",
+      "P3 D65 PQ W300",
+      "P3 DCI Gamma 2.6",
+      "P3 DCI PQ",
+      "PA247CV",
+      "PA278CV",
+      "PAL/SECAM",
+      "Panasonic V-Gamut V-Log",
+      "Panavision Genesis Tungsten Log (by Adobe)",
+      "Rec. ITU-R BT.2020-1",
+      "Rec. ITU-R BT.709-5",
+      "Rec.2020 Gamma 2.4",
+      "Rec.2100 HLG Scene W100",
+      "Rec.2100 HLG Scene W63",
+      "Rec.2100 HLG Scene W75",
+      "Rec.2100 HLG Scene W81",
+      "Rec.2100 HLG W100",
+      "Rec.2100 HLG W1000",
+      "Rec.2100 HLG W203",
+      "Rec.2100 HLG W300",
+      "Rec.2100 PQ",
+      "Rec.2100 PQ W100",
+      "Rec.2100 PQ W10000",
+      "Rec.2100 PQ W203",
+      "Rec.2100 PQ W300",
+      "Rec.601 NTSC Gamma 2.4",
+      "Rec.601 PAL Gamma 2.4",
+      "Rec.709 Gamma 2.4",
+      "Rec.709 HLG Scene W100",
+      "Rec.709 HLG Scene W63",
+      "Rec.709 HLG Scene W75",
+      "Rec.709 HLG Scene W81",
+      "Rec.709 PQ",
+      "Rec.709 PQ W100",
+      "Rec.709 PQ W203",
+      "Rec.709 PQ W300",
+      "Rec.709 V-Log",
+      "ROMM RGB: ISO 22028-2:2013",
+      "ROMM-RGB",
+      "SD 170M-A",
+      "SDTV NTSC 16-235",
+      "SDTV PAL 16-235",
+      "SMPTE RP 431-2-2007 DCI (P3)",
+      "SMPTE-C",
+      "Sony S-Gamut3.Cine/S-Log3",
+      "Sony S-Gamut3/S-Log3",
+      "Universal Camera Film Printing Density",
+      "Viper FilmStream Daylight Log (by Adobe)",
+      "Viper FilmStream Tungsten Log (by Adobe)",
+      "Wide Gamut RGB"
+     ],
+     "solidColor": [
+      2,
+      2,
+      2
+     ],
+     "workingSpace": "Rec.2100 PQ",
+     "workingSpaceBefore": "None"
+    },
+    "version": "26.5x89"
+   },
+   "editable_assertions": "project.workingSpace \"Rec.2100 PQ\" (from listColorProfiles), bitsPerChannel 32, linearBlending false; solid colour [2,2,2] accepted and read back",
+   "reference": {
+    "file_name": "color_ae_rec2100_pq_project__composition_1.direct-v1.mp4",
+    "committed": false,
+    "local_evidence": true,
+    "size_bytes": 17005,
+    "sha256": "09f165c5bce9221dcf72aadcc86443a2be201a61e28a7be18eef40ca114245e2",
+    "renderer": "aerender",
+    "settings": {
+     "format": "mp4",
+     "fps": 30.0,
+     "start_frame": null,
+     "end_frame": null,
+     "audio": "native"
+    },
+    "request_id": "color-hdr-e3-color-ae-rec2100-pq-project-render-v1",
+    "adobe_queue_job": 10676,
+    "rendered_from_sha256": "1be8348f26fdca009d01fce9f9efac4f26d840ae942dfcbc8f2305caa42cb465",
+    "fps": 30,
+    "frame_count": 60,
+    "width": 1920,
+    "height": 1080
+   },
+   "measured": "SDR H.264 reference only: solid renders as [253,253,253] (clipped); HDR AE reference (render_aep_ame with an HDR preset) unrun",
+   "proof_status": "render_compared: independent native source + headless-adobe render_aep (aerender) and render_aep_ame (AME PQ) references; super-white round trip identical in the SDR aerender route, not identical in the AME PQ route (export working profile differs); not registered in aep_video_references.json (its inventory test pins an exact count and an aerender CLI provenance schema)",
+   "hdr_reference": {
+    "file_name": "color_ae_rec2100_pq_project__composition_1.ame-pq-v1.mov",
+    "committed": false,
+    "local_evidence": true,
+    "size_bytes": 2535620,
+    "sha256": "58f04fce9da6f30a941b16ad3b63ca49fcf6dfacf5dc4dd44c0da498e3caf5ad",
+    "renderer": "AME ExtendScript --console es.processFile",
+    "application": "Adobe Media Encoder",
+    "request_id": "lane-h-w5-render-aep-ame-pq-native-pq-v1",
+    "adobe_queue_job": 10974,
+    "rendered_from_sha256": "1be8348f26fdca009d01fce9f9efac4f26d840ae942dfcbc8f2305caa42cb465",
+    "preset_sha256": "d34aacc2ea04c85c691f7c095883518a703c571e41e14d82dd1d2a476f2c6c00",
+    "preset_note": "private clone of installed \"Apple ProRes 422 HQ PQ.epr\" (sha256 5f39ce02514327f7ed0ef0d57d005c67b08a89eb470eeebf3b911f5ccebe5e5c) changing only the frame rate to 30 fps (ADBEVideoFPS 8475667200 -> 8467200000 ticks); graphics white 100 (installed)",
+    "stream": "ProRes 422 HQ (apch) yuv422p10le, bt2020nc/smpte2084/bt2020, 30/1, 60 frames, plus a silent 48 kHz PCM track",
+    "fps": 30,
+    "frame_count": 60,
+    "width": 1920,
+    "height": 1080,
+    "measured": "frame 30 mean Y code 1019 of 1023 (the [2,2,2] super-white solid lies above the PQ peak code 1.0 and AE's PQ output clips it to the top of the range). Round trip (tsrct-conv sha256 fd7e34db85c9417ca783b955c72c56d2b143f01e1e7d16c547a3a85257275e11 built at 5dd6ea12e2): the fresh import keeps the code values through the linear super-white continuation and our --hdr pq --fps 30 export writes [2,2,2] again, but the AME PQ render (job 11452) gives Y 1003: 0/60 identical frames, 10-bit MAD 8.0, max 16. The export declares the owned PQ W203 v2 ICC, which AE converts above code 1.0 differently from its built-in profile (probe exports at codes 1.5/2/4 render Y 977/1003/1019, jobs 11465/11452/11466; code 1.0 renders 940 in both). The aerender SDR render of the same export (job 11453) is identical to the direct-v1 reference (60/60). Earlier converters: placeholder rendered black (Y 64, job 10975); clip to the peak rendered Y 940 (MAD 39.5, job 11344)."
+   }
+  },
+  {
+   "case": "color_ae_curves",
+   "feature": "AE Curves (ADBE CurvesCustom): one RGB-channel point dragged in the curve editor; Red/Green/Blue/Alpha untouched",
+   "after_effects_version": "26.5x89",
+   "authoring": {
+    "operation": "human-authored in AE 26.5 UI (Effect > Color Correction > Curves, RGB channel, one point dragged from the diagonal to about input 128 / output 160; File > Save As)",
+    "author": "user",
+    "note": "no script: the Curves control is propertyValueType CUSTOM_VALUE and cannot be set through ExtendScript (this case was previously listed as blocked for that reason)"
+   },
+   "composition_id": 2,
+   "composition_name": "chart",
+   "width": 1920,
+   "height": 1080,
+   "fps": 29.97,
+   "duration_seconds": 2.002,
+   "media_dependencies": [
+    {
+     "authored_name": "chart.png",
+     "repo_path": "crates/premiere_file/tests/fixtures/a1_bg_chart.png",
+     "sha256": "b679c8554208b55e04f4105ddf93db5601daa5f44b4211ec42d713f1005e9a7a",
+     "size_bytes": 8663
+    }
+   ],
+   "native_readback": {
+    "operation": "headless-adobe run_jsx (managed AE): open, read every effect control, project colour settings",
+    "adobe_queue_job": 10996,
+    "request_id": "k-w5-ae-readback-ungraded-curves-v2",
+    "version": "26.5x89",
+    "project_colour": {
+     "bitsPerChannel": 8,
+     "workingSpace": "None",
+     "linearBlending": false,
+     "linearizeWorkingSpace": false
+    },
+    "effects": [
+     {
+      "matchName": "ADBE CurvesCustom",
+      "enabled": true,
+      "layer": "chart.png",
+      "Channel (ADBE CurvesCustom-0002)": 1,
+      "Curves (ADBE CurvesCustom-0001)": "CUSTOM_VALUE (not readable through ExtendScript)"
+     }
+    ]
+   },
+   "decoded_native_payload": "4 Curves arbitrary records (definition default + instance, twice); instance: RGB table = half-up natural cubic spline through the saved RGB editor points (0,0) (127,162) (255,255) in code space (0 codes error; piecewise-linear through the same points would be 7 codes off); RGB editor block count 3, selected point index 1; Red/Green/Blue/Alpha tables identity with the default diagonal",
+   "editable_assertions": "effects::curves::fixture_tests::{ui_authored_curves_store_rgb_points_and_their_natural_spline_table, native_ui_curves_fixture_imports_the_rgb_curve_as_the_fx_master_curve, imported_ui_curve_exports_its_knots_as_editor_points_and_reimports}",
+   "reference": {
+    "renderer": "aerender",
+    "adobe_queue_job": 10949,
+    "request_id": "k-w5-ae-render-native-curves-v1",
+    "settings": {
+     "audio": "native",
+     "end_frame": null,
+     "format": "mp4",
+     "fps": 30.0,
+     "start_frame": null
+    },
+    "rendered_from_sha256": "96b6abaa937d5af246309b496b03efb21ec6a8248a35a89cda4ec9c1577775e7",
+    "file_name": "color_ae_curves__composition_2.direct-v1.mp4",
+    "committed": false,
+    "local_evidence": true,
+    "sha256": "5efb23a1bad0d5f20a8131a24c9101d7b1846593753318b57d3a470669152dcf",
+    "size_bytes": 19563,
+    "width": 1920,
+    "height": 1080,
+    "fps": 30,
+    "frame_count": 61
+   },
+   "proof_status": "native source + headless-adobe render_aep (aerender) reference; not registered in aep_video_references.json (see tests/README.md)",
+   "source": {
+    "path_sanitization": {
+     "note": "absolute footage path in the alias 'fullpath' JSON replaced by /fixture-source/<padding>/chart.png of exactly the same byte length (RIFX chunk sizes unchanged); nothing else changed. reference.rendered_from_sha256 names the original bytes.",
+     "original_sha256": "96b6abaa937d5af246309b496b03efb21ec6a8248a35a89cda4ec9c1577775e7"
+    },
+    "repo_path": "crates/aftereffects_file/tests/fixtures/color_ae_curves.aep",
+    "sha256": "76610bf4bbfdaf545fbf6cb627ecc58106168d31fb0f7d13c70bba4fe143730b",
+    "size_bytes": 91383
+   }
+  },
+  {
+   "case": "color_ae_apply_color_lut",
+   "feature": "AE Apply Color LUT (Effect > Utility) with a picked 3D .cube LUT",
+   "source": {
+    "repo_path": "crates/aftereffects_file/tests/fixtures/color_ae_apply_color_lut.aep",
+    "size_bytes": 145695,
+    "sha256": "14f90c67d05cb6ce3897d913ba3e2727573751d829d547fcf149875616f60f2a",
+    "path_sanitization": {
+     "original_sha256": "a180f7621526bb05ad1ed6df771ea6a513fd61841e450709a9102f6a3a343806",
+     "note": "absolute footage path in the alias 'fullpath' JSON replaced by /fixture-source/<padding>/chart.png of exactly the same byte length (RIFX chunk sizes unchanged); nothing else changed. reference.rendered_from_sha256 names the original bytes."
+    }
+   },
+   "media_dependencies": [
+    {
+     "authored_name": "chart.png",
+     "repo_path": "crates/premiere_file/tests/fixtures/a1_bg_chart.png",
+     "size_bytes": 8663,
+     "sha256": "b679c8554208b55e04f4105ddf93db5601daa5f44b4211ec42d713f1005e9a7a"
+    }
+   ],
+   "lut_dependencies": [
+    {
+     "authored_name": "color_warm_tint.cube",
+     "repo_path": "crates/premiere_file/tests/fixtures/color_warm_tint.cube",
+     "size_bytes": 132736,
+     "sha256": "13772dfbbc8458b284eed36ba398d1660963da95c9a6a14ed5a08596dea3bbf3",
+     "note": "AE does not reference this file after the pick: it stores the LUT as an ICC device link (16-bit 17^3 CLUT) in the effect's sequence data and keeps only the file name"
+    }
+   ],
+   "composition_id": 2,
+   "composition_name": "chart",
+   "width": 1920,
+   "height": 1080,
+   "fps": 29.97,
+   "duration_seconds": 2.002,
+   "project_color": {
+    "bits_per_channel": 8,
+    "working_space": "None",
+    "linear_blending": false,
+    "lut_interpolation_method": 1
+   },
+   "after_effects_version": "26.5x89",
+   "authoring": {
+    "operation": "human-authored in the After Effects 26.5 UI (File > New Project, import chart.png, New Composition from Selection, Effect > Utility > Apply Color LUT, pick color_warm_tint.cube in the file dialog that opens, defaults otherwise, Save As); scripted authoring is impossible because applying the effect through ExtendScript opens that modal picker",
+    "author": "human (user), not scripted"
+   },
+   "native_readback": {
+    "operation": "headless-adobe run_jsx, fresh host, no save",
+    "script": "crates/aftereffects_file/tests/fixtures/effects/color_ae_apply_color_lut-readback.jsx",
+    "receipt": "crates/aftereffects_file/tests/fixtures/effects/color_ae_apply_color_lut-receipt.json",
+    "request_id": "l-w5-ae-readback-native-apply-color-lut-v1",
+    "adobe_queue_job": 10954,
+    "observed": "one ADBE Apply Color LUT2 'Apply Color LUT' on layer chart.png (comp 2); controls -0001 (NO_VALUE group start; ExtendScript names it '<LUT not set>' in the fresh host although the render applies the LUT), -0002 (NO_VALUE group end), Compositing Options defaults; project 8 bpc, working space None, linear blending off, lutInterpolationMethod 1"
+   },
+   "editable_assertions": "effects::apply_color_lut::tests (embedded CLUT equals the picked .cube within 16-bit rounding; registry pard bytes equal the fixture's definition and instance tables) and adapter::apply_color_lut::tests (import packages the .cube asset, export re-embeds the same CLUT, reimport yields the same lookTransform)",
+   "reference": {
+    "file_name": "color_ae_apply_color_lut__composition_2.direct-v1.mp4",
+    "committed": false,
+    "local_evidence": true,
+    "size_bytes": 19824,
+    "sha256": "69112ccfea63a62aaefb3ed936f76408f1c6a801936e471cef5a69d8d41c10c2",
+    "renderer": "aerender",
+    "settings": {
+     "format": "mp4",
+     "fps": 30.0,
+     "start_frame": null,
+     "end_frame": null,
+     "audio": "native"
+    },
+    "request_id": "l-w5-ae-render-native-apply-color-lut-v1",
+    "adobe_queue_job": 10957,
+    "rendered_from_sha256": "a180f7621526bb05ad1ed6df771ea6a513fd61841e450709a9102f6a3a343806",
+    "fps": 30,
+    "frame_count": 61,
+    "width": 1920,
+    "height": 1080
+   },
+   "measured": "frame 30 vs an AE render of the same chart without the effect (converter export, adobe job 10990): R and B change, G unchanged (mean 126.31 vs 126.36), MAD 12.78; vs that ungraded AE frame passed through the .cube with trilinear interpolation (ffmpeg lut3d): full-resolution MAD 0.62, max 2 (the warm-tint LUT is per-channel affine, so trilinear and tetrahedral agree and the fixture cannot discriminate interpolation)",
+   "proof_status": "independent human-authored native source + headless-adobe render_aep (aerender) reference; not registered in aep_video_references.json (same reason as the scripted colour fixtures)"
+  },
+  {
+   "case": "color_ae_working_srgb",
+   "feature": "Project working space sRGB IEC61966-2.1 (built-in), 8 bpc, not linearized, no linear blending; one 50% grey solid",
+   "source": {
+    "repo_path": "crates/aftereffects_file/tests/fixtures/color_ae_working_srgb.aep",
+    "size_bytes": 77681,
+    "sha256": "296bc5b3c80fe420b7da83c6d2850a5e118ccdd9794e3a497707b5268055b577"
+   },
+   "media_dependencies": [],
+   "composition_id": 1,
+   "composition_name": "Working Space",
+   "width": 320,
+   "height": 180,
+   "fps": 30,
+   "duration_seconds": 1,
+   "after_effects_version": "26.5x89",
+   "authoring": {
+    "operation": "headless-adobe run_jsx (managed AE, native save)",
+    "script": {
+     "repo_path": "crates/aftereffects_file/tests/fixtures/color_ae_band_author.jsx",
+     "size_bytes": 4797,
+     "sha256": "eb7e25a28c36c2a9452e14c241dba04365d729866456dad1ed9a40d5365d1114",
+     "ran_size_bytes": 4812,
+     "ran_sha256": "e312a1a27844960bf962f81c8dbb690a064d021bcf3ce0eb56854300530c6398",
+     "note": "after the authoring runs only the first comment line changed (internal workstream label removed); every code line is byte-identical to the revision that ran"
+    },
+    "request_id": "lane-m-w5-ae-author-color-ae-working-srgb-v2",
+    "adobe_queue_job": 10903,
+    "data": {
+     "fixture": "color_ae_working_srgb",
+     "project_color": {
+      "bits_per_channel": 8,
+      "working_space": "sRGB IEC61966-2.1",
+      "linear_blending": false,
+      "linearize": false
+     },
+     "comp": {
+      "name": "Working Space",
+      "width": 320,
+      "height": 180,
+      "duration": 1,
+      "fps": 30
+     },
+     "bands": [
+      {
+       "name": "Grey",
+       "y": 0,
+       "height": 180,
+       "ramp": false,
+       "color": [
+        0.5,
+        0.5,
+        0.5
+       ],
+       "effects": []
+      }
+     ]
+    }
+   },
+   "native_readback": {
+    "steps": {
+     "after": {
+      "bits": 8,
+      "linearBlending": false,
+      "linearize": false,
+      "workingSpace": "sRGB IEC61966-2.1"
+     },
+     "before": {
+      "bits": 8,
+      "workingSpace": "None"
+     }
+    },
+    "compositionId": 1,
+    "version": "26.5x89"
+   },
+   "editable_assertions": "project.workingSpace \"sRGB IEC61966-2.1\", bitsPerChannel 8, linearBlending false, linearizeWorkingSpace false, set explicitly and read back; saved PwCs declaration is baseProfileType 2 with the embedded Adobe ICC (SHA-256 bound in hdr.rs ADOBE_SDR_WORKING_PROFILES)",
+   "reference": null,
+   "proof_status": "structural_only: independent native source of the working-profile declaration; no render reference (the solid's numeric value is the only content); tests hdr::tests::native_ae_sdr_working_spaces_are_admitted_as_declared_legacy"
+  },
+  {
+   "case": "color_ae_working_rec709_gamma24",
+   "feature": "Project working space Rec.709 Gamma 2.4 (built-in), 8 bpc, not linearized, no linear blending; one 50% grey solid",
+   "source": {
+    "repo_path": "crates/aftereffects_file/tests/fixtures/color_ae_working_rec709_gamma24.aep",
+    "size_bytes": 74321,
+    "sha256": "587b86ae00f15c6c351d0eb9bb62052425fcbf3da356f3d7808cfac79221c9d5"
+   },
+   "media_dependencies": [],
+   "composition_id": 1,
+   "composition_name": "Working Space",
+   "width": 320,
+   "height": 180,
+   "fps": 30,
+   "duration_seconds": 1,
+   "after_effects_version": "26.5x89",
+   "authoring": {
+    "operation": "headless-adobe run_jsx (managed AE, native save)",
+    "script": {
+     "repo_path": "crates/aftereffects_file/tests/fixtures/color_ae_band_author.jsx",
+     "size_bytes": 4797,
+     "sha256": "eb7e25a28c36c2a9452e14c241dba04365d729866456dad1ed9a40d5365d1114",
+     "ran_size_bytes": 4812,
+     "ran_sha256": "e312a1a27844960bf962f81c8dbb690a064d021bcf3ce0eb56854300530c6398",
+     "note": "after the authoring runs only the first comment line changed (internal workstream label removed); every code line is byte-identical to the revision that ran"
+    },
+    "request_id": "lane-m-w5-ae-author-color-ae-working-rec709-gamma24-v2",
+    "adobe_queue_job": 10904,
+    "data": {
+     "fixture": "color_ae_working_rec709_gamma24",
+     "project_color": {
+      "bits_per_channel": 8,
+      "working_space": "Rec.709 Gamma 2.4",
+      "linear_blending": false,
+      "linearize": false
+     },
+     "comp": {
+      "name": "Working Space",
+      "width": 320,
+      "height": 180,
+      "duration": 1,
+      "fps": 30
+     },
+     "bands": [
+      {
+       "name": "Grey",
+       "y": 0,
+       "height": 180,
+       "ramp": false,
+       "color": [
+        0.5,
+        0.5,
+        0.5
+       ],
+       "effects": []
+      }
+     ]
+    }
+   },
+   "native_readback": {
+    "steps": {
+     "after": {
+      "bits": 8,
+      "linearBlending": false,
+      "linearize": false,
+      "workingSpace": "Rec.709 Gamma 2.4"
+     },
+     "before": {
+      "bits": 8,
+      "workingSpace": "sRGB IEC61966-2.1"
+     }
+    },
+    "compositionId": 1,
+    "version": "26.5x89"
+   },
+   "editable_assertions": "project.workingSpace \"Rec.709 Gamma 2.4\", bitsPerChannel 8, linearBlending false, linearizeWorkingSpace false, set explicitly and read back; saved PwCs declaration is baseProfileType 2 with the embedded Adobe ICC (SHA-256 bound in hdr.rs ADOBE_SDR_WORKING_PROFILES)",
+   "reference": null,
+   "proof_status": "structural_only: independent native source of the working-profile declaration; no render reference (the solid's numeric value is the only content); tests hdr::tests::native_ae_sdr_working_spaces_are_admitted_as_declared_legacy"
+  },
+  {
+   "case": "color_ae_brightness_contrast_modes",
+   "feature": "ADBE Brightness & Contrast 2 in both Use Legacy (supports HDR) modes over a horizontal Gradient Ramp: ten 1024x64 bands, band 1 the bare ramp, bands 2-10 (B,C,Legacy) = (0,0,1) (40,0,1) (-40,0,1) (0,50,1) (0,-50,1) (40,30,1) (40,30,0) (0,50,0) (40,0,0); 8 bpc, working space None",
+   "source": {
+    "repo_path": "crates/aftereffects_file/tests/fixtures/color_ae_brightness_contrast_modes.aep",
+    "size_bytes": 226287,
+    "sha256": "38dbbb12c8407c274650d7afcd54ce05dd97933a15a9b13ebb292b46e868cc56"
+   },
+   "media_dependencies": [],
+   "composition_id": 1,
+   "composition_name": "Brightness Contrast Modes",
+   "width": 1024,
+   "height": 640,
+   "fps": 30,
+   "duration_seconds": 1,
+   "after_effects_version": "26.5x89",
+   "authoring": {
+    "operation": "headless-adobe run_jsx (managed AE, native save)",
+    "script": {
+     "repo_path": "crates/aftereffects_file/tests/fixtures/color_ae_band_author.jsx",
+     "size_bytes": 4797,
+     "sha256": "eb7e25a28c36c2a9452e14c241dba04365d729866456dad1ed9a40d5365d1114",
+     "ran_size_bytes": 4812,
+     "ran_sha256": "e312a1a27844960bf962f81c8dbb690a064d021bcf3ce0eb56854300530c6398",
+     "note": "after the authoring runs only the first comment line changed (internal workstream label removed); every code line is byte-identical to the revision that ran"
+    },
+    "request_id": "lane-m-w5-ae-author-color-ae-brightness-contrast-modes-v2",
+    "adobe_queue_job": 10851,
+    "data": {
+     "fixture": "color_ae_brightness_contrast_modes",
+     "project_color": {
+      "bits_per_channel": 8,
+      "working_space": "None",
+      "linear_blending": false,
+      "linearize": false
+     },
+     "comp": {
+      "name": "Brightness Contrast Modes",
+      "width": 1024,
+      "height": 640,
+      "duration": 1,
+      "fps": 30
+     },
+     "bands": [
+      {
+       "name": "Ramp",
+       "y": 0,
+       "height": 64,
+       "ramp": true,
+       "color": [
+        0.5,
+        0.5,
+        0.5
+       ],
+       "effects": []
+      },
+      {
+       "name": "B0 C0 Legacy",
+       "y": 64,
+       "height": 64,
+       "ramp": true,
+       "color": [
+        0.5,
+        0.5,
+        0.5
+       ],
+       "effects": [
+        {
+         "match_name": "ADBE Brightness & Contrast 2",
+         "values": [
+          {
+           "param": "ADBE Brightness & Contrast 2-0001",
+           "value": 0
+          },
+          {
+           "param": "ADBE Brightness & Contrast 2-0002",
+           "value": 0
+          },
+          {
+           "param": "ADBE Brightness & Contrast 2-0003",
+           "value": 1
+          }
+         ]
+        }
+       ]
+      },
+      {
+       "name": "B40 C0 Legacy",
+       "y": 128,
+       "height": 64,
+       "ramp": true,
+       "color": [
+        0.5,
+        0.5,
+        0.5
+       ],
+       "effects": [
+        {
+         "match_name": "ADBE Brightness & Contrast 2",
+         "values": [
+          {
+           "param": "ADBE Brightness & Contrast 2-0001",
+           "value": 40
+          },
+          {
+           "param": "ADBE Brightness & Contrast 2-0002",
+           "value": 0
+          },
+          {
+           "param": "ADBE Brightness & Contrast 2-0003",
+           "value": 1
+          }
+         ]
+        }
+       ]
+      },
+      {
+       "name": "B-40 C0 Legacy",
+       "y": 192,
+       "height": 64,
+       "ramp": true,
+       "color": [
+        0.5,
+        0.5,
+        0.5
+       ],
+       "effects": [
+        {
+         "match_name": "ADBE Brightness & Contrast 2",
+         "values": [
+          {
+           "param": "ADBE Brightness & Contrast 2-0001",
+           "value": -40
+          },
+          {
+           "param": "ADBE Brightness & Contrast 2-0002",
+           "value": 0
+          },
+          {
+           "param": "ADBE Brightness & Contrast 2-0003",
+           "value": 1
+          }
+         ]
+        }
+       ]
+      },
+      {
+       "name": "B0 C50 Legacy",
+       "y": 256,
+       "height": 64,
+       "ramp": true,
+       "color": [
+        0.5,
+        0.5,
+        0.5
+       ],
+       "effects": [
+        {
+         "match_name": "ADBE Brightness & Contrast 2",
+         "values": [
+          {
+           "param": "ADBE Brightness & Contrast 2-0001",
+           "value": 0
+          },
+          {
+           "param": "ADBE Brightness & Contrast 2-0002",
+           "value": 50
+          },
+          {
+           "param": "ADBE Brightness & Contrast 2-0003",
+           "value": 1
+          }
+         ]
+        }
+       ]
+      },
+      {
+       "name": "B0 C-50 Legacy",
+       "y": 320,
+       "height": 64,
+       "ramp": true,
+       "color": [
+        0.5,
+        0.5,
+        0.5
+       ],
+       "effects": [
+        {
+         "match_name": "ADBE Brightness & Contrast 2",
+         "values": [
+          {
+           "param": "ADBE Brightness & Contrast 2-0001",
+           "value": 0
+          },
+          {
+           "param": "ADBE Brightness & Contrast 2-0002",
+           "value": -50
+          },
+          {
+           "param": "ADBE Brightness & Contrast 2-0003",
+           "value": 1
+          }
+         ]
+        }
+       ]
+      },
+      {
+       "name": "B40 C30 Legacy",
+       "y": 384,
+       "height": 64,
+       "ramp": true,
+       "color": [
+        0.5,
+        0.5,
+        0.5
+       ],
+       "effects": [
+        {
+         "match_name": "ADBE Brightness & Contrast 2",
+         "values": [
+          {
+           "param": "ADBE Brightness & Contrast 2-0001",
+           "value": 40
+          },
+          {
+           "param": "ADBE Brightness & Contrast 2-0002",
+           "value": 30
+          },
+          {
+           "param": "ADBE Brightness & Contrast 2-0003",
+           "value": 1
+          }
+         ]
+        }
+       ]
+      },
+      {
+       "name": "B40 C30 Default",
+       "y": 448,
+       "height": 64,
+       "ramp": true,
+       "color": [
+        0.5,
+        0.5,
+        0.5
+       ],
+       "effects": [
+        {
+         "match_name": "ADBE Brightness & Contrast 2",
+         "values": [
+          {
+           "param": "ADBE Brightness & Contrast 2-0001",
+           "value": 40
+          },
+          {
+           "param": "ADBE Brightness & Contrast 2-0002",
+           "value": 30
+          },
+          {
+           "param": "ADBE Brightness & Contrast 2-0003",
+           "value": 0
+          }
+         ]
+        }
+       ]
+      },
+      {
+       "name": "B0 C50 Default",
+       "y": 512,
+       "height": 64,
+       "ramp": true,
+       "color": [
+        0.5,
+        0.5,
+        0.5
+       ],
+       "effects": [
+        {
+         "match_name": "ADBE Brightness & Contrast 2",
+         "values": [
+          {
+           "param": "ADBE Brightness & Contrast 2-0001",
+           "value": 0
+          },
+          {
+           "param": "ADBE Brightness & Contrast 2-0002",
+           "value": 50
+          },
+          {
+           "param": "ADBE Brightness & Contrast 2-0003",
+           "value": 0
+          }
+         ]
+        }
+       ]
+      },
+      {
+       "name": "B40 C0 Default",
+       "y": 576,
+       "height": 64,
+       "ramp": true,
+       "color": [
+        0.5,
+        0.5,
+        0.5
+       ],
+       "effects": [
+        {
+         "match_name": "ADBE Brightness & Contrast 2",
+         "values": [
+          {
+           "param": "ADBE Brightness & Contrast 2-0001",
+           "value": 40
+          },
+          {
+           "param": "ADBE Brightness & Contrast 2-0002",
+           "value": 0
+          },
+          {
+           "param": "ADBE Brightness & Contrast 2-0003",
+           "value": 0
+          }
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   },
+   "native_readback": {
+    "bands": [
+     {
+      "controls": [
+       {
+        "name": "Start of Ramp",
+        "observed": [
+         0,
+         32
+        ],
+        "param": "ADBE Ramp-0001"
+       },
+       {
+        "name": "Start Color",
+        "observed": [
+         0,
+         0,
+         0,
+         1
+        ],
+        "param": "ADBE Ramp-0002"
+       },
+       {
+        "name": "End of Ramp",
+        "observed": [
+         1024,
+         32
+        ],
+        "param": "ADBE Ramp-0003"
+       },
+       {
+        "name": "End Color",
+        "observed": [
+         1,
+         1,
+         1,
+         1
+        ],
+        "param": "ADBE Ramp-0004"
+       }
+      ],
+      "index": 1,
+      "name": "Ramp"
+     },
+     {
+      "controls": [
+       {
+        "name": "Start of Ramp",
+        "observed": [
+         0,
+         32
+        ],
+        "param": "ADBE Ramp-0001"
+       },
+       {
+        "name": "Start Color",
+        "observed": [
+         0,
+         0,
+         0,
+         1
+        ],
+        "param": "ADBE Ramp-0002"
+       },
+       {
+        "name": "End of Ramp",
+        "observed": [
+         1024,
+         32
+        ],
+        "param": "ADBE Ramp-0003"
+       },
+       {
+        "name": "End Color",
+        "observed": [
+         1,
+         1,
+         1,
+         1
+        ],
+        "param": "ADBE Ramp-0004"
+       },
+       {
+        "name": "Brightness",
+        "observed": 0,
+        "param": "ADBE Brightness & Contrast 2-0001"
+       },
+       {
+        "name": "Contrast",
+        "observed": 0,
+        "param": "ADBE Brightness & Contrast 2-0002"
+       },
+       {
+        "name": "Use Legacy (supports HDR)",
+        "observed": 1,
+        "param": "ADBE Brightness & Contrast 2-0003"
+       }
+      ],
+      "index": 1,
+      "name": "B0 C0 Legacy"
+     },
+     {
+      "controls": [
+       {
+        "name": "Start of Ramp",
+        "observed": [
+         0,
+         32
+        ],
+        "param": "ADBE Ramp-0001"
+       },
+       {
+        "name": "Start Color",
+        "observed": [
+         0,
+         0,
+         0,
+         1
+        ],
+        "param": "ADBE Ramp-0002"
+       },
+       {
+        "name": "End of Ramp",
+        "observed": [
+         1024,
+         32
+        ],
+        "param": "ADBE Ramp-0003"
+       },
+       {
+        "name": "End Color",
+        "observed": [
+         1,
+         1,
+         1,
+         1
+        ],
+        "param": "ADBE Ramp-0004"
+       },
+       {
+        "name": "Brightness",
+        "observed": 40,
+        "param": "ADBE Brightness & Contrast 2-0001"
+       },
+       {
+        "name": "Contrast",
+        "observed": 0,
+        "param": "ADBE Brightness & Contrast 2-0002"
+       },
+       {
+        "name": "Use Legacy (supports HDR)",
+        "observed": 1,
+        "param": "ADBE Brightness & Contrast 2-0003"
+       }
+      ],
+      "index": 1,
+      "name": "B40 C0 Legacy"
+     },
+     {
+      "controls": [
+       {
+        "name": "Start of Ramp",
+        "observed": [
+         0,
+         32
+        ],
+        "param": "ADBE Ramp-0001"
+       },
+       {
+        "name": "Start Color",
+        "observed": [
+         0,
+         0,
+         0,
+         1
+        ],
+        "param": "ADBE Ramp-0002"
+       },
+       {
+        "name": "End of Ramp",
+        "observed": [
+         1024,
+         32
+        ],
+        "param": "ADBE Ramp-0003"
+       },
+       {
+        "name": "End Color",
+        "observed": [
+         1,
+         1,
+         1,
+         1
+        ],
+        "param": "ADBE Ramp-0004"
+       },
+       {
+        "name": "Brightness",
+        "observed": -40,
+        "param": "ADBE Brightness & Contrast 2-0001"
+       },
+       {
+        "name": "Contrast",
+        "observed": 0,
+        "param": "ADBE Brightness & Contrast 2-0002"
+       },
+       {
+        "name": "Use Legacy (supports HDR)",
+        "observed": 1,
+        "param": "ADBE Brightness & Contrast 2-0003"
+       }
+      ],
+      "index": 1,
+      "name": "B-40 C0 Legacy"
+     },
+     {
+      "controls": [
+       {
+        "name": "Start of Ramp",
+        "observed": [
+         0,
+         32
+        ],
+        "param": "ADBE Ramp-0001"
+       },
+       {
+        "name": "Start Color",
+        "observed": [
+         0,
+         0,
+         0,
+         1
+        ],
+        "param": "ADBE Ramp-0002"
+       },
+       {
+        "name": "End of Ramp",
+        "observed": [
+         1024,
+         32
+        ],
+        "param": "ADBE Ramp-0003"
+       },
+       {
+        "name": "End Color",
+        "observed": [
+         1,
+         1,
+         1,
+         1
+        ],
+        "param": "ADBE Ramp-0004"
+       },
+       {
+        "name": "Brightness",
+        "observed": 0,
+        "param": "ADBE Brightness & Contrast 2-0001"
+       },
+       {
+        "name": "Contrast",
+        "observed": 50,
+        "param": "ADBE Brightness & Contrast 2-0002"
+       },
+       {
+        "name": "Use Legacy (supports HDR)",
+        "observed": 1,
+        "param": "ADBE Brightness & Contrast 2-0003"
+       }
+      ],
+      "index": 1,
+      "name": "B0 C50 Legacy"
+     },
+     {
+      "controls": [
+       {
+        "name": "Start of Ramp",
+        "observed": [
+         0,
+         32
+        ],
+        "param": "ADBE Ramp-0001"
+       },
+       {
+        "name": "Start Color",
+        "observed": [
+         0,
+         0,
+         0,
+         1
+        ],
+        "param": "ADBE Ramp-0002"
+       },
+       {
+        "name": "End of Ramp",
+        "observed": [
+         1024,
+         32
+        ],
+        "param": "ADBE Ramp-0003"
+       },
+       {
+        "name": "End Color",
+        "observed": [
+         1,
+         1,
+         1,
+         1
+        ],
+        "param": "ADBE Ramp-0004"
+       },
+       {
+        "name": "Brightness",
+        "observed": 0,
+        "param": "ADBE Brightness & Contrast 2-0001"
+       },
+       {
+        "name": "Contrast",
+        "observed": -50,
+        "param": "ADBE Brightness & Contrast 2-0002"
+       },
+       {
+        "name": "Use Legacy (supports HDR)",
+        "observed": 1,
+        "param": "ADBE Brightness & Contrast 2-0003"
+       }
+      ],
+      "index": 1,
+      "name": "B0 C-50 Legacy"
+     },
+     {
+      "controls": [
+       {
+        "name": "Start of Ramp",
+        "observed": [
+         0,
+         32
+        ],
+        "param": "ADBE Ramp-0001"
+       },
+       {
+        "name": "Start Color",
+        "observed": [
+         0,
+         0,
+         0,
+         1
+        ],
+        "param": "ADBE Ramp-0002"
+       },
+       {
+        "name": "End of Ramp",
+        "observed": [
+         1024,
+         32
+        ],
+        "param": "ADBE Ramp-0003"
+       },
+       {
+        "name": "End Color",
+        "observed": [
+         1,
+         1,
+         1,
+         1
+        ],
+        "param": "ADBE Ramp-0004"
+       },
+       {
+        "name": "Brightness",
+        "observed": 40,
+        "param": "ADBE Brightness & Contrast 2-0001"
+       },
+       {
+        "name": "Contrast",
+        "observed": 30,
+        "param": "ADBE Brightness & Contrast 2-0002"
+       },
+       {
+        "name": "Use Legacy (supports HDR)",
+        "observed": 1,
+        "param": "ADBE Brightness & Contrast 2-0003"
+       }
+      ],
+      "index": 1,
+      "name": "B40 C30 Legacy"
+     },
+     {
+      "controls": [
+       {
+        "name": "Start of Ramp",
+        "observed": [
+         0,
+         32
+        ],
+        "param": "ADBE Ramp-0001"
+       },
+       {
+        "name": "Start Color",
+        "observed": [
+         0,
+         0,
+         0,
+         1
+        ],
+        "param": "ADBE Ramp-0002"
+       },
+       {
+        "name": "End of Ramp",
+        "observed": [
+         1024,
+         32
+        ],
+        "param": "ADBE Ramp-0003"
+       },
+       {
+        "name": "End Color",
+        "observed": [
+         1,
+         1,
+         1,
+         1
+        ],
+        "param": "ADBE Ramp-0004"
+       },
+       {
+        "name": "Brightness",
+        "observed": 40,
+        "param": "ADBE Brightness & Contrast 2-0001"
+       },
+       {
+        "name": "Contrast",
+        "observed": 30,
+        "param": "ADBE Brightness & Contrast 2-0002"
+       },
+       {
+        "name": "Use Legacy (supports HDR)",
+        "observed": 0,
+        "param": "ADBE Brightness & Contrast 2-0003"
+       }
+      ],
+      "index": 1,
+      "name": "B40 C30 Default"
+     },
+     {
+      "controls": [
+       {
+        "name": "Start of Ramp",
+        "observed": [
+         0,
+         32
+        ],
+        "param": "ADBE Ramp-0001"
+       },
+       {
+        "name": "Start Color",
+        "observed": [
+         0,
+         0,
+         0,
+         1
+        ],
+        "param": "ADBE Ramp-0002"
+       },
+       {
+        "name": "End of Ramp",
+        "observed": [
+         1024,
+         32
+        ],
+        "param": "ADBE Ramp-0003"
+       },
+       {
+        "name": "End Color",
+        "observed": [
+         1,
+         1,
+         1,
+         1
+        ],
+        "param": "ADBE Ramp-0004"
+       },
+       {
+        "name": "Brightness",
+        "observed": 0,
+        "param": "ADBE Brightness & Contrast 2-0001"
+       },
+       {
+        "name": "Contrast",
+        "observed": 50,
+        "param": "ADBE Brightness & Contrast 2-0002"
+       },
+       {
+        "name": "Use Legacy (supports HDR)",
+        "observed": 0,
+        "param": "ADBE Brightness & Contrast 2-0003"
+       }
+      ],
+      "index": 1,
+      "name": "B0 C50 Default"
+     },
+     {
+      "controls": [
+       {
+        "name": "Start of Ramp",
+        "observed": [
+         0,
+         32
+        ],
+        "param": "ADBE Ramp-0001"
+       },
+       {
+        "name": "Start Color",
+        "observed": [
+         0,
+         0,
+         0,
+         1
+        ],
+        "param": "ADBE Ramp-0002"
+       },
+       {
+        "name": "End of Ramp",
+        "observed": [
+         1024,
+         32
+        ],
+        "param": "ADBE Ramp-0003"
+       },
+       {
+        "name": "End Color",
+        "observed": [
+         1,
+         1,
+         1,
+         1
+        ],
+        "param": "ADBE Ramp-0004"
+       },
+       {
+        "name": "Brightness",
+        "observed": 40,
+        "param": "ADBE Brightness & Contrast 2-0001"
+       },
+       {
+        "name": "Contrast",
+        "observed": 0,
+        "param": "ADBE Brightness & Contrast 2-0002"
+       },
+       {
+        "name": "Use Legacy (supports HDR)",
+        "observed": 0,
+        "param": "ADBE Brightness & Contrast 2-0003"
+       }
+      ],
+      "index": 1,
+      "name": "B40 C0 Default"
+     }
+    ],
+    "compositionId": 1,
+    "version": "26.5x89",
+    "steps": {
+     "after": {
+      "bits": 8,
+      "linearBlending": false,
+      "linearize": false,
+      "workingSpace": "None"
+     },
+     "before": {
+      "bits": 8,
+      "workingSpace": "None"
+     }
+    }
+   },
+   "editable_assertions": "every Brightness (-0001), Contrast (-0002) and Use Legacy (-0003) value set by script and read back identically; tests structure_document::tests::native_brightness_contrast::*",
+   "reference": {
+    "file_name": "color_ae_brightness_contrast_modes__composition_1.direct-v1.mp4",
+    "committed": false,
+    "local_evidence": true,
+    "size_bytes": 15706,
+    "sha256": "1a6c4035aef032cf3e9e2f29447372677dbe27110f951fb4e890f1ff264d31aa",
+    "renderer": "aerender",
+    "settings": {
+     "format": "mp4",
+     "fps": 30.0,
+     "start_frame": null,
+     "end_frame": null,
+     "audio": "native"
+    },
+    "request_id": "lane-m-w5-render-aep-bc-modes-mp4-v1",
+    "adobe_queue_job": 10956,
+    "rendered_from_sha256": "38dbbb12c8407c274650d7afcd54ce05dd97933a15a9b13ebb292b46e868cc56",
+    "fps": 30,
+    "frame_count": 30,
+    "width": 1024,
+    "height": 640
+   },
+   "measured": "Lossless measurement render (render_aep format mov, qtrle, frames 0-2, job 10909) middle row of each band against band 1: Use Legacy on = out = clamp(((in + B/255) - 0.5) * k + 0.5) with k = 100/(100 - C) for C > 0 and (100 + C)/100 otherwise (linear fits exact within 1.1/255); the FX brightnessContrast kernel (crates/renderer/src/shaders/brightness_contrast.wgsl, evaluated numerically on the grey ramp) differs by mean 7.0-22.8/255 (max 53.4) from legacy bands and mean 3.9-11.8/255 (max 24.0) from default-mode bands; the committed H.264 reference agrees with the lossless render within codec noise (frame 15: same per-band means within 0.1/255)",
+   "proof_status": "independent native source + aerender reference; FX side compared through its shader formula, not an FX GPU render (unrun); not registered in aep_video_references.json (its inventory test pins an exact count and an aerender CLI provenance schema)"
+  },
+  {
+   "case": "color_ae_rec2100_pq_solid",
+   "feature": "Project working space Rec.2100 PQ, 32 bpc, one chromatic solid inside the PQ signal domain (discriminating HDR round trip)",
+   "source": {
+    "repo_path": "crates/aftereffects_file/tests/fixtures/color_ae_rec2100_pq_solid.aep",
+    "size_bytes": 114517,
+    "sha256": "7ff0f899a8ee174799a29b58ac269e42a6326e1773db17217334b1cfc07fe6ac"
+   },
+   "media_dependencies": [],
+   "composition_id": 1,
+   "composition_name": "Rec2100 PQ Solid",
+   "width": 1920,
+   "height": 1080,
+   "fps": 30,
+   "duration_seconds": 2,
+   "after_effects_version": "26.5x89",
+   "authoring": {
+    "operation": "headless-adobe run_jsx (managed AE, native save)",
+    "script": {
+     "repo_path": "crates/aftereffects_file/tests/fixtures/color_ae_author.jsx",
+     "size_bytes": 6405,
+     "sha256": "e95e2715870bcf90c7ee7e53aaf880a02398168a8a3e75eaefc971c079ec8d2d"
+    },
+    "request_id": "lane-h-w5-ae-author-color-ae-rec2100-pq-solid-v1",
+    "adobe_queue_job": 11017,
+    "data": {
+     "comp_name": "Rec2100 PQ Solid",
+     "fixture": "color_ae_rec2100_pq_solid",
+     "effects": [],
+     "project_color": {
+      "working_space": "Rec.2100 PQ",
+      "bits_per_channel": 32
+     },
+     "solid_color": [
+      0.55,
+      0.45,
+      0.35
+     ]
+    }
+   },
+   "native_readback": {
+    "steps": {
+     "bitsPerChannel": 32,
+     "linearBlending": false,
+     "solidColor": [
+      0.55000001192093,
+      0.44999998807907,
+      0.34999999403954
+     ],
+     "workingSpace": "Rec.2100 PQ",
+     "workingSpaceBefore": "None"
+    },
+    "layer": "Solid"
+   },
+   "editable_assertions": "project.workingSpace \"Rec.2100 PQ\" set explicitly (host default was \"None\"), bitsPerChannel 32, linearBlending false; solid colour read back as f32 [0.55, 0.45, 0.35]",
+   "reference": {
+    "file_name": "color_ae_rec2100_pq_solid__composition_1.ame-pq-v1.mov",
+    "committed": false,
+    "local_evidence": true,
+    "size_bytes": 2597060,
+    "sha256": "e35e5d0995aa2c9347e23a527d0053095bd576cb4938bfbfca0fe235310f9df8",
+    "renderer": "AME ExtendScript --console es.processFile",
+    "application": "Adobe Media Encoder",
+    "request_id": "lane-h-w5-render-aep-ame-pq-native-pq-solid-v1",
+    "adobe_queue_job": 11040,
+    "rendered_from_sha256": "7ff0f899a8ee174799a29b58ac269e42a6326e1773db17217334b1cfc07fe6ac",
+    "preset_sha256": "d34aacc2ea04c85c691f7c095883518a703c571e41e14d82dd1d2a476f2c6c00",
+    "preset_note": "private clone of installed \"Apple ProRes 422 HQ PQ.epr\" (sha256 5f39ce02514327f7ed0ef0d57d005c67b08a89eb470eeebf3b911f5ccebe5e5c) changing only the frame rate to 30 fps (ADBEVideoFPS 8475667200 -> 8467200000 ticks); graphics white 100 (installed)",
+    "stream": "ProRes 422 HQ (apch) yuv422p10le, bt2020nc/smpte2084/bt2020, 30/1, 60 frames, plus a silent 48 kHz PCM track",
+    "fps": 30,
+    "frame_count": 60,
+    "width": 1920,
+    "height": 1080
+   },
+   "measured": "frame 30 mean Y code 476 (10-bit), flat",
+   "converter_comparison": {
+    "export": "tsrct-conv (sha256 e189456398eb689597e6b378eb0384048ef2c82a2ed10c6bbed4a6b576482128, built at 94971429d9) convert <fresh import>.tsrct --to after-effects --hdr pq --fps 30",
+    "import": "built-in \"Rec.2100 PQ\" bound by its ICC payload, hdrGraphicsWhiteNits 100; solid -> Rect fillColor [1.4016560955189357, 0.692583764300832, 0.3858007139993514, 1]",
+    "export_working_space": "owned profile \"Public BT.2100 PQ BT.2020 D65 W203 v2\" (AE readback of the analogous --hdr pq export, job 10931)",
+    "render_request_id": "lane-h-w5-render-aep-ame-pq-ours-pq-solid-hdr-v1",
+    "adobe_queue_job": 11041,
+    "result": "all 60 decoded frames identical to the reference (yuv422p10le, 10-bit MAD 0, max 0)"
+   },
+   "proof_status": "independent native source + AME PQ render; our fresh import exported with --hdr pq renders decoded-frame identical; not registered in aep_video_references.json (its inventory test pins an exact count and an aerender CLI provenance schema)"
+  },
+  {
+   "case": "color_aces_ae_project",
+   "feature": "OCIO colour-managed project (32 bpc, built-in \"ACES 2.0 Studio v4.0\" config, ACEScg working colour space), the in-house chart with Lumetri Exposure +1 (0-2 s) and the in-house S-Log3/S-Gamut3.Cine clip interpreted as OCIO input S-Log3 S-Gamut3.Cine (2-4 s)",
+   "source": {
+    "repo_path": "crates/aftereffects_file/tests/fixtures/color_aces_ae_project.aep",
+    "size_bytes": 209877,
+    "sha256": "c71997e15c0fa990d8b87ac0e7923f11fdf7583c2fa61f7a52a2c74bfc207183",
+    "path_sanitization": {
+     "original_sha256": "1603b871e8bece0032db16c962c609c4937f697b70840c5b118e4fa77ef74d47",
+     "note": "the two private-job footage alias full paths replaced by equal-length /fixture-source/<padding>/job/inputs/<leaf> paths (leaves chart.png, color_aces_slog3_clip.mp4); the relative alias hint then finds <job>/inputs/<leaf> for the project at <job>/native/; nothing else changed"
+    }
+   },
+   "media_dependencies": [
+    {
+     "repo_path": "crates/premiere_file/tests/fixtures/a1_bg_chart.png",
+     "size_bytes": 8663,
+     "sha256": "b679c8554208b55e04f4105ddf93db5601daa5f44b4211ec42d713f1005e9a7a"
+    },
+    {
+     "repo_path": "crates/premiere_file/tests/fixtures/color_aces_slog3_clip.mp4",
+     "size_bytes": 15554,
+     "sha256": "490ce2a397e48a94b81f34977d3cd73fba434288dad7f26b7b4de0ac1bc6589e"
+    }
+   ],
+   "composition_id": 1,
+   "composition_name": "ACES Comp",
+   "width": 1920,
+   "height": 1080,
+   "fps": 30,
+   "duration_seconds": 4,
+   "after_effects_version": "26.5x89",
+   "authoring": {
+    "operation": "three steps, all native AE 26.5x89 through headless-adobe except the offline declaration patch",
+    "steps": [
+     {
+      "step": "run_jsx author (managed AE, native save)",
+      "script": {
+       "repo_path": "crates/aftereffects_file/tests/fixtures/color_aces_ae_project.author.jsx",
+       "size_bytes": 6001,
+       "sha256": "8409fd138470a7c778ca6cae01dce7f2a29c2ece72e953aa84edbc9a7205d0ed"
+      },
+      "request_id": "lane-x-w6-ae-author-color-aces-ae-project-v2",
+      "adobe_queue_job": 11555,
+      "data": {
+       "comp_name": "ACES Comp",
+       "bits_per_channel": 32,
+       "color_management_system": 1,
+       "ocio_configuration_file": "ACES 2.0 Studio v4.0",
+       "working_space": "ACEScg",
+       "exposure": 1,
+       "footage_settings": []
+      },
+      "result": "bitsPerChannel 32, colorManagementSystem 1, ocioConfigurationFile \"ACES 2.0 Studio v4.0\" applied; workingSpace \"ACEScg\" not accepted (stays \"None\", PwCs {}); no footage colour setter exists (FootageSource/FootageItem expose none)"
+     },
+     {
+      "step": "offline declaration patch",
+      "result": "PwCs -> ACES/ACEScg OCIO declaration; log footage CLRS ocsp -> Input/Sony/S-Log3 S-Gamut3.Cine (was the file rule Display/Rec.1886 Rec.709 - Display)"
+     },
+     {
+      "step": "run_jsx open + native resave",
+      "script": {
+       "repo_path": "crates/aftereffects_file/tests/fixtures/color_aces_ae_resave.jsx",
+       "size_bytes": 1802,
+       "sha256": "4b1ebe6e17bb4ce2c9d438d1904e2f542403a5db395ca75be8797ac6453a441c"
+      },
+      "request_id": "lane-x-w6-ae-resave-ocio-patched-v1",
+      "adobe_queue_job": 11570,
+      "result": "AE opened the patched project and saved it: project.workingSpace reads \"ACES/ACEScg\", the footage ocsp declaration is kept byte-equal"
+     }
+    ]
+   },
+   "editable_assertions": "pcms {\"colorManagementSystem\":1,\"lutInterpolationMethod\":1,\"ocioConfigurationFile\":\"ACES 2.0 Studio v4.0\"}; PwCs ACES/ACEScg (baseProfileType 3); log footage ocsp Input/Sony/S-Log3 S-Gamut3.Cine; chart footage ocsp Display/sRGB - Display (file rule); Lumetri Exposure (ADBE Lumetri-0011) 1",
+   "reference": {
+    "file_name": "color_aces_ae_project__composition_1.direct-v1.mp4",
+    "size_bytes": 1777218,
+    "sha256": "9afb58ff6694acf1f16392506792074409b1726ff43160f159fe3839fefb344b",
+    "committed": false,
+    "local_evidence": true,
+    "renderer": "aerender (render_aep, default output module: the ACEScg working values, no OCIO view transform)",
+    "request_id": "lane-x-w6-render-aep-ae-resaved-v2",
+    "adobe_queue_job": 11591,
+    "rendered_from_sha256": "1603b871e8bece0032db16c962c609c4937f697b70840c5b118e4fa77ef74d47",
+    "fps": 30,
+    "frame_count": 120,
+    "width": 1920,
+    "height": 1080,
+    "note": "not committed: no in-repo test consumes it; measured numbers are in the support ledger"
+   },
+   "proof_status": "natively saved (AE resave) project with an offline-set OCIO working space and footage interpretation; import/export proof and measured gaps in docs/after-effects-support.md (ACES colour management)"
+  },
+  {
+   "case": "color_ae_lumetri_custom_look",
+   "feature": "AE Lumetri Color Creative Look browsed to a custom 3D .cube (Intensity 100)",
+   "source": {
+    "repo_path": "crates/aftereffects_file/tests/fixtures/color_ae_lumetri_custom_lut.aep",
+    "size_bytes": 518877,
+    "sha256": "ad190b3c3545ef6b0f92a5f6836fc0b70a6ed07b98906709aeca5b411623afda",
+    "path_sanitization": {
+     "original_sha256": "b2594edcb855f7e2410d802beb2749bd3fc4de393bac451ed99f691bf8af9a47",
+     "note": "the authoring folder prefix of every absolute path (the footage alias 'fullpath' JSON, the Lumetri Blob shader-graph LUT paths and <embeddedlut> file names in ASCII, and the -0004/-0024 path slots in UTF-16LE) replaced by /fixture-source/<padding>/ of exactly the same length (RIFX chunk sizes unchanged); nothing else changed. The sanitized paths name no existing file: AE 26.5 renders both compositions of the sanitized and the original bytes decoded-frame identical (60/60 frames, MAD 0; headless-adobe jobs 12089/12090 vs 12087/12088), so it renders the embedded copy. reference.rendered_from_sha256 names the original bytes."
+    }
+   },
+   "after_effects_version": "26.5x89",
+   "authoring": {
+    "operation": "human-authored in the After Effects 26.5 UI from written instructions: File > New Project; Project Settings > Color: Adobe Managed, 8 bpc, working space None, Linearize Working Space and Blend Colors Using 1.0 Gamma off; import a1_bg_chart.png; composition 'Custom Look' (1920x1080, 30 fps, 2 s) with Lumetri Color > Creative > Look > Browse... color_warm_tint.cube (Intensity 100); composition 'Custom Input LUT' the same with Lumetri Color > Basic Correction > Input LUT > Browse... the same .cube; no other control changed; File > Save As",
+    "author": "human (user), not scripted",
+    "note": "no script: browsing a Lumetri LUT opens a file dialog, and scripting cannot set the path slot"
+   },
+   "width": 1920,
+   "height": 1080,
+   "fps": 30,
+   "duration_seconds": 2.0,
+   "media_dependencies": [
+    {
+     "authored_name": "a1_bg_chart.png",
+     "repo_path": "crates/premiere_file/tests/fixtures/a1_bg_chart.png",
+     "sha256": "b679c8554208b55e04f4105ddf93db5601daa5f44b4211ec42d713f1005e9a7a",
+     "size_bytes": 8663
+    }
+   ],
+   "lut_dependencies": [
+    {
+     "authored_name": "color_warm_tint.cube",
+     "repo_path": "crates/premiere_file/tests/fixtures/color_warm_tint.cube",
+     "size_bytes": 132736,
+     "sha256": "13772dfbbc8458b284eed36ba398d1660963da95c9a6a14ed5a08596dea3bbf3",
+     "note": "AE saves the absolute path (path slot and Blob) and an ITX3 copy of the samples in Embedded LUTs (-0098) equal to the file's values as f32; the import packages that copy, never the file"
+    }
+   ],
+   "project_color": {
+    "bits_per_channel": 8,
+    "working_space": "None",
+    "linear_blending": false,
+    "linearize_working_space": false,
+    "lut_interpolation_method": 1,
+    "color_management_system": 0
+   },
+   "native_readback": {
+    "operation": "headless-adobe inspect_aep of the original bytes (job 12094, request color-hdr-w9-inspect-ae-customlut-v2) and run_jsx readback of the committed sanitized bytes in a fresh host, no save (job 12095, request color-hdr-w9-ae-readback-custom-lut-v1, script crates/aftereffects_file/tests/fixtures/effects/color_ae_apply_color_lut-readback.jsx)",
+    "observed": "comp 15 'Custom Input LUT' and comp 2 'Custom Look', one enabled ADBE Lumetri each on a1_bg_chart.png; Basic Correction and Creative Active 1, Intensity 100; original bytes: Input LUT popup (-0005) 2 in comp 15 and Look popup (-0025) 2 in comp 2; sanitized bytes (no file at the saved path): both popups read back 1 (None) although AE renders the LUT; project 8 bpc, working space None, linear blending off, Adobe colour management, lutInterpolationMethod 1"
+   },
+   "decoded_native_payload": "per instance: path slot -0004 (Input LUT) or -0024 (Look) = the absolute path, UTF-16LE with one NUL terminator; Blob -0001 = Lumetri shader graph with a LUT shader before BasicCorrection3 (Input LUT) or beside LookColorSpace inside a __Preset group whose __Intensity is 100 (Look), and an <embeddedlut> mapping id a013be8bd74b4ffc1f24bb6fc04645e5 to the path; Embedded LUTs -0098 = that id, a u32 length and an ITX3 17^3 table equal to color_warm_tint.cube as f32 (max difference 2.4e-8); Look Color Space -0130 = 29. Only the Input LUT instance has its own parT table (popup 2 saved there); the Look instance saves no popup",
+   "composition_id": 2,
+   "composition_name": "Custom Look",
+   "editable_assertions": "adapter::apply_color_lut::lumetri_tests::ui_browsed_lumetri_luts_import_as_editable_look_transforms_and_export_as_apply_color_lut (fresh import: one lookTransform, mix 1, lut3d sdr-rec709-display in/out, packaged color_warm_tint.cube within 1e-7 of the file; export as Apply Color LUT and reimport within 16-bit rounding); effects::color_grades::tests::{lumetri_browsed_luts_import_as_look_transforms_around_the_grade, lumetri_browsed_luts_without_a_copy_or_in_an_off_section_are_reported}",
+   "reference": {
+    "file_name": "color_ae_lumetri_custom_look__composition_2.direct-v1.mp4",
+    "committed": false,
+    "local_evidence": true,
+    "size_bytes": 18567,
+    "sha256": "4acfb6d34b878becbb8e76df09904fde38b1112a8290b163c28dea51f7f21c22",
+    "renderer": "aerender",
+    "settings": {
+     "format": "mp4",
+     "fps": 30.0
+    },
+    "request_id": "color-hdr-w9-render-ae-customlut-look-orig-v1",
+    "adobe_queue_job": 12087,
+    "rendered_from_sha256": "b2594edcb855f7e2410d802beb2749bd3fc4de393bac451ed99f691bf8af9a47",
+    "fps": 30,
+    "frame_count": 60,
+    "width": 1920,
+    "height": 1080,
+    "sanitized_render": {
+     "sha256": "b29aad94077c32a8f0d45f7c95f68d0a790ef60b0d8ecdb5caa242437fc04341",
+     "adobe_queue_job": 12089,
+     "rendered_from_sha256": "ad190b3c3545ef6b0f92a5f6836fc0b70a6ed07b98906709aeca5b411623afda",
+     "decoded_frames_equal_reference": true
+    },
+    "observed": "the chart through color_warm_tint.cube once: frame 30 within 0.65 mean (max 11) 8-bit codes of a trilinear application to the chart's display codes, 12.96 from the ungraded chart"
+   },
+   "proof_status": "native source + headless-adobe render_aep reference; fresh import (tsrct-conv built at fc243d7720, sha256 e69dd864b2a2320f4448c79f976f9a1671645bb414db1239a978a497cd7757e5) rendered by FX: 60-frame mean 0.34 (max 18) from the reference; its export (Apply Color LUT) rendered by AE: 0.17 (max 2); not registered in aep_video_references.json (see tests/README.md)"
+  },
+  {
+   "case": "color_ae_lumetri_custom_input_lut",
+   "feature": "AE Lumetri Color Basic Correction Input LUT browsed to a custom 3D .cube",
+   "source": {
+    "repo_path": "crates/aftereffects_file/tests/fixtures/color_ae_lumetri_custom_lut.aep",
+    "size_bytes": 518877,
+    "sha256": "ad190b3c3545ef6b0f92a5f6836fc0b70a6ed07b98906709aeca5b411623afda",
+    "path_sanitization": {
+     "original_sha256": "b2594edcb855f7e2410d802beb2749bd3fc4de393bac451ed99f691bf8af9a47",
+     "note": "the authoring folder prefix of every absolute path (the footage alias 'fullpath' JSON, the Lumetri Blob shader-graph LUT paths and <embeddedlut> file names in ASCII, and the -0004/-0024 path slots in UTF-16LE) replaced by /fixture-source/<padding>/ of exactly the same length (RIFX chunk sizes unchanged); nothing else changed. The sanitized paths name no existing file: AE 26.5 renders both compositions of the sanitized and the original bytes decoded-frame identical (60/60 frames, MAD 0; headless-adobe jobs 12089/12090 vs 12087/12088), so it renders the embedded copy. reference.rendered_from_sha256 names the original bytes."
+    }
+   },
+   "after_effects_version": "26.5x89",
+   "authoring": {
+    "operation": "human-authored in the After Effects 26.5 UI from written instructions: File > New Project; Project Settings > Color: Adobe Managed, 8 bpc, working space None, Linearize Working Space and Blend Colors Using 1.0 Gamma off; import a1_bg_chart.png; composition 'Custom Look' (1920x1080, 30 fps, 2 s) with Lumetri Color > Creative > Look > Browse... color_warm_tint.cube (Intensity 100); composition 'Custom Input LUT' the same with Lumetri Color > Basic Correction > Input LUT > Browse... the same .cube; no other control changed; File > Save As",
+    "author": "human (user), not scripted",
+    "note": "no script: browsing a Lumetri LUT opens a file dialog, and scripting cannot set the path slot"
+   },
+   "width": 1920,
+   "height": 1080,
+   "fps": 30,
+   "duration_seconds": 2.0,
+   "media_dependencies": [
+    {
+     "authored_name": "a1_bg_chart.png",
+     "repo_path": "crates/premiere_file/tests/fixtures/a1_bg_chart.png",
+     "sha256": "b679c8554208b55e04f4105ddf93db5601daa5f44b4211ec42d713f1005e9a7a",
+     "size_bytes": 8663
+    }
+   ],
+   "lut_dependencies": [
+    {
+     "authored_name": "color_warm_tint.cube",
+     "repo_path": "crates/premiere_file/tests/fixtures/color_warm_tint.cube",
+     "size_bytes": 132736,
+     "sha256": "13772dfbbc8458b284eed36ba398d1660963da95c9a6a14ed5a08596dea3bbf3",
+     "note": "AE saves the absolute path (path slot and Blob) and an ITX3 copy of the samples in Embedded LUTs (-0098) equal to the file's values as f32; the import packages that copy, never the file"
+    }
+   ],
+   "project_color": {
+    "bits_per_channel": 8,
+    "working_space": "None",
+    "linear_blending": false,
+    "linearize_working_space": false,
+    "lut_interpolation_method": 1,
+    "color_management_system": 0
+   },
+   "native_readback": {
+    "operation": "headless-adobe inspect_aep of the original bytes (job 12094, request color-hdr-w9-inspect-ae-customlut-v2) and run_jsx readback of the committed sanitized bytes in a fresh host, no save (job 12095, request color-hdr-w9-ae-readback-custom-lut-v1, script crates/aftereffects_file/tests/fixtures/effects/color_ae_apply_color_lut-readback.jsx)",
+    "observed": "comp 15 'Custom Input LUT' and comp 2 'Custom Look', one enabled ADBE Lumetri each on a1_bg_chart.png; Basic Correction and Creative Active 1, Intensity 100; original bytes: Input LUT popup (-0005) 2 in comp 15 and Look popup (-0025) 2 in comp 2; sanitized bytes (no file at the saved path): both popups read back 1 (None) although AE renders the LUT; project 8 bpc, working space None, linear blending off, Adobe colour management, lutInterpolationMethod 1"
+   },
+   "decoded_native_payload": "per instance: path slot -0004 (Input LUT) or -0024 (Look) = the absolute path, UTF-16LE with one NUL terminator; Blob -0001 = Lumetri shader graph with a LUT shader before BasicCorrection3 (Input LUT) or beside LookColorSpace inside a __Preset group whose __Intensity is 100 (Look), and an <embeddedlut> mapping id a013be8bd74b4ffc1f24bb6fc04645e5 to the path; Embedded LUTs -0098 = that id, a u32 length and an ITX3 17^3 table equal to color_warm_tint.cube as f32 (max difference 2.4e-8); Look Color Space -0130 = 29. Only the Input LUT instance has its own parT table (popup 2 saved there); the Look instance saves no popup",
+   "composition_id": 15,
+   "composition_name": "Custom Input LUT",
+   "editable_assertions": "adapter::apply_color_lut::lumetri_tests::ui_browsed_lumetri_luts_import_as_editable_look_transforms_and_export_as_apply_color_lut (fresh import: one lookTransform, mix 1, lut3d sdr-rec709-display in/out, packaged color_warm_tint.cube within 1e-7 of the file; export as Apply Color LUT and reimport within 16-bit rounding); effects::color_grades::tests::{lumetri_browsed_luts_import_as_look_transforms_around_the_grade, lumetri_browsed_luts_without_a_copy_or_in_an_off_section_are_reported}",
+   "reference": {
+    "file_name": "color_ae_lumetri_custom_input_lut__composition_15.direct-v1.mp4",
+    "committed": false,
+    "local_evidence": true,
+    "size_bytes": 18567,
+    "sha256": "3511316e7812e9e622dbf28e8bc4832f822aa777ab9a80c6ab02120154cd6423",
+    "renderer": "aerender",
+    "settings": {
+     "format": "mp4",
+     "fps": 30.0
+    },
+    "request_id": "color-hdr-w9-render-ae-customlut-input-orig-v1",
+    "adobe_queue_job": 12088,
+    "rendered_from_sha256": "b2594edcb855f7e2410d802beb2749bd3fc4de393bac451ed99f691bf8af9a47",
+    "fps": 30,
+    "frame_count": 60,
+    "width": 1920,
+    "height": 1080,
+    "sanitized_render": {
+     "sha256": "35d7409b4cfaac548f9a3cb126542bfd931582d28d8874c534b8e48ad92a575c",
+     "adobe_queue_job": 12090,
+     "rendered_from_sha256": "ad190b3c3545ef6b0f92a5f6836fc0b70a6ed07b98906709aeca5b411623afda",
+     "decoded_frames_equal_reference": true
+    },
+    "observed": "the chart through color_warm_tint.cube once: frame 30 within 0.65 mean (max 11) 8-bit codes of a trilinear application to the chart's display codes, 12.96 from the ungraded chart"
+   },
+   "proof_status": "native source + headless-adobe render_aep reference; fresh import (tsrct-conv built at fc243d7720, sha256 e69dd864b2a2320f4448c79f976f9a1671645bb414db1239a978a497cd7757e5) rendered by FX: 60-frame mean 0.34 (max 18) from the reference; its export (Apply Color LUT) rendered by AE: 0.17 (max 2); not registered in aep_video_references.json (see tests/README.md)"
+  }
+ ],
+ "blocked": []
+}

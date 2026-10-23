@@ -2888,7 +2888,7 @@ dependencies = [
 
 [[package]]
 name = "tsrct-conv"
-version = "0.4.0"
+version = "0.3.0"
 dependencies = [
  "aftereffects_file",
  "anyhow",

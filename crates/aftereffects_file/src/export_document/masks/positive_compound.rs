@@ -110,6 +110,7 @@ pub(super) fn lower(
             feather_track: None,
             opacity_track: None,
             expansion_track: None,
+            source_mask: None,
         });
     }
     let diagnostic = format!(

@@ -220,6 +220,7 @@ fn writer_encodes_disabled_clips_and_leaves_tracks_enabled() {
         facts.video.as_mut().unwrap().kind = crate::schema::PrMediaKind::Video {
             codec: Some(crate::schema::VideoCodec::H264),
             hdr_profile: None,
+            color_space_override: None,
         };
         facts.relative_path = Some("./media/source.mp4".into());
         facts.relative_paths = vec!["./media/source.mp4".into()];
@@ -254,4 +255,74 @@ fn writer_encodes_disabled_clips_and_leaves_tracks_enabled() {
     let hidden = read.video_occurrences().last().unwrap();
     assert_eq!(hidden.timeline_ticks(), 0..5 * TICKS);
     assert_eq!(hidden.source_ticks(), 0..5 * TICKS);
+}
+
+#[test]
+fn track_editing_locks_are_admitted_without_reports() {
+    for locks in [
+        "<IsSyncLocked>true</IsSyncLocked>",
+        "<IsSyncLocked>false</IsSyncLocked><IsLocked>true</IsLocked>",
+    ] {
+        let xml = SOURCE.replace(
+            "<Track><ID>1</ID></Track>",
+            &format!("<Track><ID>1</ID>{locks}</Track>"),
+        );
+        assert_ne!(xml, SOURCE);
+        let (project, omissions) = inspect_project_with_omissions(&xml, None).unwrap();
+        assert!(omissions.is_empty(), "{locks}: {omissions:?}");
+        let sequence = project.single_sequence().unwrap();
+        assert_eq!(sequence.video_occurrences().count(), 1);
+        assert!(sequence.video_occurrences().all(|clip| clip.enabled));
+    }
+}
+
+/// Older saves (`Sequence` Version 11, `VideoTrackGroup` Version 10) write a
+/// sequence `ID`, a progressive `FieldType`, a flat VR configuration with 0 x 0
+/// captured angles and no sequence component chain; none has picture
+/// semantics.
+#[test]
+fn older_sequence_fields_without_picture_semantics_are_admitted() {
+    const FLAT_VR: &str = r#"{"ambisonicsHRIR":"","ambisonicsMonitoringType":0,"capturedHorizontalView":0,"capturedVerticalView":0,"fieldOfHorizontalView":108,"fieldOfVerticalView":108,"projectionType":0,"stereoscopicEye":0,"stereoscopicType":0,"version":3}"#;
+    let older = |field_type: &str, vr: &str| {
+        SOURCE
+            .replace(
+                "<Name>Main</Name>",
+                "<Name>Main</Name><ID>5c3b8f2e-0000-4000-8000-000000000001</ID>",
+            )
+            .replace(
+                "<FrameRect>0,0,1920,1080</FrameRect><ComponentOwner><Components ObjectRef=\"2\"/></ComponentOwner></VideoTrackGroup>",
+                &format!("<FrameRect>0,0,1920,1080</FrameRect><FieldType>{field_type}</FieldType><ImmersiveVideoVRConfiguration>{vr}</ImmersiveVideoVRConfiguration></VideoTrackGroup>"),
+            )
+    };
+    let xml = older("0", FLAT_VR);
+    assert_ne!(xml, SOURCE);
+    let (project, omissions) = inspect_project_with_omissions(&xml, None).unwrap();
+    assert!(omissions.is_empty(), "{omissions:?}");
+    assert_eq!(
+        project
+            .single_sequence()
+            .unwrap()
+            .video_occurrences()
+            .count(),
+        1
+    );
+
+    // Interlaced fields and a VR projection change the picture: reported.
+    let xml = older(
+        "1",
+        &FLAT_VR.replace("\"projectionType\":0", "\"projectionType\":1"),
+    );
+    let (_, omissions) = inspect_project_with_omissions(&xml, None).unwrap();
+    let reasons: Vec<_> = omissions
+        .iter()
+        .map(|omission| omission.reason.as_str())
+        .collect();
+    assert_eq!(
+        reasons,
+        [
+            "nondefault FieldType not converted",
+            "nondefault ImmersiveVideoVRConfiguration not converted"
+        ],
+        "{omissions:?}"
+    );
 }

@@ -167,6 +167,7 @@ fn expression_override_invalidation_is_composition_local() {
             let mut converter = Converter {
                 text_overrides: Default::default(),
                 effect_definitions: &[],
+                grade_domain: crate::effects::color_grades::ColorGradeDomain::Legacy,
                 expression_samples: captures,
                 expression_evaluations: Default::default(),
                 items: project.items.iter().map(|item| (item.id, item)).collect(),
@@ -200,6 +201,7 @@ fn expression_override_invalidation_is_composition_local() {
                     "layers",
                     0,
                 ),
+                hdr_transfer: None,
             };
             let layers = converter
                 .composition_layers(item, fx_schema::LayerId::new(50_000), 0)

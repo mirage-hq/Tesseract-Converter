@@ -242,6 +242,8 @@ fn matte_media(matte: PrColorMatte) -> PrMedia {
             width: 1920,
             height: 1080,
             kind: PrMediaKind::ColorMatte(matte),
+            input_lut: None,
+            camera_override: None,
         }),
         audio: None,
     }
@@ -453,6 +455,7 @@ fn mattes_round_trip_as_solid_rectangles_distinct_from_gaps_and_the_canvas() {
                     PrMediaKind::Video {
                         codec: Some(VideoCodec::H264),
                         hdr_profile: None,
+                        color_space_override: None,
                     },
                     10 * TICKS
                 ),
@@ -517,6 +520,7 @@ fn a_blended_matte_stays_a_color_matte_with_its_blend_both_ways() {
             vec![PrMediaKind::Video {
                 codec: Some(VideoCodec::H264),
                 hdr_profile: None,
+                color_space_override: None,
             }],
             vec![PrMediaKind::ColorMatte(RED)],
         ]
@@ -1273,6 +1277,7 @@ fn crop_mask_rectangles_are_guides_not_authored_mattes_in_either_layer_order() {
             [vec![PrMediaKind::Video {
                 codec: Some(VideoCodec::H264),
                 hdr_profile: None,
+                color_space_override: None,
             }]]
         );
         let clip = project
@@ -1332,6 +1337,7 @@ fn a_crop_guide_serialized_after_the_canvas_keeps_it_the_canvas() {
         [vec![PrMediaKind::Video {
             codec: Some(VideoCodec::H264),
             hdr_profile: None,
+            color_space_override: None,
         }]]
     );
     let clip = project
@@ -1365,6 +1371,7 @@ fn a_non_black_bottom_rectangle_is_an_authored_matte_not_the_canvas() {
             vec![PrMediaKind::Video {
                 codec: Some(VideoCodec::H264),
                 hdr_profile: None,
+                color_space_override: None,
             }]
         ]
     );

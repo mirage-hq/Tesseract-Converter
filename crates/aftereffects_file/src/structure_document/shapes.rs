@@ -2851,6 +2851,7 @@ mod tests {
                     composition: Some(composition),
                     items: Some(&items),
                     effect_definitions: &[],
+                    grade_domain: crate::effects::color_grades::ColorGradeDomain::Legacy,
                 },
                 &owner,
                 [1920, 1080],
@@ -2883,6 +2884,7 @@ mod tests {
             let mut converter = super::super::Converter {
                 text_overrides: Default::default(),
                 effect_definitions: &[],
+                grade_domain: crate::effects::color_grades::ColorGradeDomain::Legacy,
                 expression_samples: &samples,
                 expression_evaluations: Default::default(),
                 items: project.items.iter().map(|item| (item.id, item)).collect(),
@@ -2903,6 +2905,7 @@ mod tests {
                 shape_budget: Default::default(),
                 mapped_shape_expressions: Default::default(),
                 root_progress: fx_conv::Progress::default().phase("alias occurrence", "layers", 0),
+                hdr_transfer: None,
             };
             let layers = converter
                 .composition_layers(&occurrence, LayerId::from(9_999), 0)
@@ -2967,6 +2970,7 @@ mod tests {
                 composition: Some(&local),
                 items: Some(&items),
                 effect_definitions: &[],
+                grade_domain: crate::effects::color_grades::ColorGradeDomain::Legacy,
             },
             &owner,
             [1920, 1080],
@@ -3075,6 +3079,7 @@ mod tests {
                 composition: Some(composition),
                 items: Some(&items),
                 effect_definitions: &[],
+                grade_domain: crate::effects::color_grades::ColorGradeDomain::Legacy,
             },
             &owner,
             [1920, 1080],
@@ -3136,6 +3141,7 @@ mod tests {
                         composition: Some(&composition),
                         items: Some(&items),
                         effect_definitions: &[],
+                        grade_domain: crate::effects::color_grades::ColorGradeDomain::Legacy,
                     },
                     &owner,
                     [1920, 1080],

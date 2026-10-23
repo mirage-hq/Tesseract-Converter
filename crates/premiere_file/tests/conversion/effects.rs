@@ -2403,9 +2403,9 @@ fn fx_replicate(id: u64, enabled: bool, (size, center): (f64, f64)) -> Value {
         "outputWidth": 100.0, "outputHeight": 100.0, "mirrorEdges": false, "phase": 0.0}})
 }
 
-/// The fixture import's reports: the sequence's Premiere 26.5.1 colour
-/// settings and the clip's UI node, which conversion does not model, and one
-/// approximation on the Replicate.
+/// The fixture import's reports: the clip's UI node, which conversion does
+/// not model, and one approximation on the Replicate. The sequence's Premiere
+/// 26.5.1 default colour settings are not reported.
 fn assert_replicate_fixture_reports(omissions: Vec<premiere_file::Omission>) {
     let (approximated, omitted): (Vec<_>, Vec<_>) = omissions
         .into_iter()
@@ -2416,20 +2416,10 @@ fn assert_replicate_fixture_reports(omissions: Vec<premiere_file::Omission>) {
         .collect();
     assert_eq!(
         omitted,
-        [
-            (
-                "VideoTrackGroup:69",
-                "ToneMappingDesaturation not converted"
-            ),
-            (
-                "VideoTrackGroup:69",
-                "nondefault ColorManagementSettings not converted"
-            ),
-            (
-                "VideoClipTrackItem:97",
-                "ClipTrackItem/TrackItem/Node not converted"
-            ),
-        ]
+        [(
+            "VideoClipTrackItem:97",
+            "ClipTrackItem/TrackItem/Node not converted"
+        )]
     );
     assert_eq!(approximated.len(), 1, "{approximated:?}");
     let warning = &approximated[0];

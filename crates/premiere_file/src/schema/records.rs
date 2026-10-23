@@ -283,6 +283,9 @@ pub(crate) const BOOL_PARAM: XmlRecordDefinition = XmlRecordDefinition::new(
 );
 pub(crate) const VIDEO_STREAM: XmlRecordDefinition =
     XmlRecordDefinition::new("VideoStream", "a36e4719-3ec6-4a0c-ab11-8b4aab377aa5", "22");
+/// Premiere 26.5.2 `color_clip_input_lut.prproj`.
+pub(crate) const LUT_ASSET: XmlRecordDefinition =
+    XmlRecordDefinition::new("LUTAsset", "d72d54f3-d40e-486d-8784-6fe0703dbb8c", "1");
 pub(crate) const MEDIA: XmlRecordDefinition =
     XmlRecordDefinition::new("Media", "7a5c103e-f3ac-4391-b6b4-7cc3d2f9a7ff", "30");
 pub(crate) const VIDEO_MEDIA_SOURCE: XmlRecordDefinition = XmlRecordDefinition::new(
@@ -396,6 +399,19 @@ pub(crate) const VIDEO_STRAIGHT_ALPHA_TYPE: &str = "1";
 pub(crate) const VIDEO_NO_ALPHA_TYPE: &str = "3";
 pub(crate) const COLOR_MANAGEMENT_SETTINGS: &str =
     r#"{"autoToneMapEnabled":true,"enableLogColorManagement":2,"lutInterpolationMethod":1}"#;
+/// The sequence `ColorManagementSettings` that Premiere 26.5.x saves on a new
+/// SDR sequence (`color_lumetri_basic.prproj`, `proxy`/Replicate fixtures):
+/// [`COLOR_MANAGEMENT_SETTINGS`] plus the host-default graphics white 203,
+/// which an SDR sequence does not render with.
+pub(crate) const COLOR_MANAGEMENT_SETTINGS_26_5: &str = r#"{"autoToneMapEnabled":true,"enableLogColorManagement":2,"graphicsWhiteLuminance":203,"lutInterpolationMethod":1}"#;
+/// The sequence `ToneMappingDesaturation` that Premiere 26.5.x saves by
+/// default, on SDR and Rec.2100 sequences alike.
+pub(crate) const TONE_MAPPING_DESATURATION: &str = "0.5";
+/// The sequence `ToneMappingKnee` that Premiere 26.5.2 saves on a Rec.2100
+/// sequence created from a clip: f32 0.2 for PQ (`color_hdr_pq_media.prproj`)
+/// and f32 0.18 for HLG (`color_hdr_hlg_media.prproj`).
+pub(crate) const TONE_MAPPING_KNEE_PQ: &str = "0.20000000298023224";
+pub(crate) const TONE_MAPPING_KNEE_HLG: &str = "0.18000000715255737";
 pub(crate) const PROJECT_COLOR_MANAGEMENT_SETTINGS: &str =
     r#"{"enableLogColorManagement":2,"graphicsWhiteLuminance":203,"lutInterpolationMethod":1}"#;
 pub(crate) const IMMERSIVE_VIDEO_VR_CONFIGURATION: &str = r#"{"ambisonicsHRIR":"","ambisonicsMonitoringType":0,"capturedHorizontalView":360,"capturedVerticalView":180,"fieldOfHorizontalView":108,"fieldOfVerticalView":108,"projectionType":0,"stereoscopicEye":0,"stereoscopicType":0,"version":3}"#;

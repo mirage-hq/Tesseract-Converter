@@ -1,0 +1,189 @@
+{
+ "schema": "lumetri-probe-provenance/v1",
+ "case": "lumetri_color_wheels_probe",
+ "feature": "Lumetri Color Color Wheels (ParameterID 47): saved triple order, hue/luma/amount semantics and per-channel lift/power/gain transfer, measured against Premiere renders",
+ "project": {
+  "repo_path": "crates/premiere_file/tests/fixtures/lumetri_color_wheels_probe.prproj",
+  "size_bytes": 32884,
+  "sha256": "1e65e56727ef4886074597f2d90b5144212132bfa321d41bd2be46d19a80d6f9",
+  "path_sanitization": {
+   "original_sha256": "1d35d59a556c84f1c18074854e48d68e47b3c998ba385bdaf034697262738284",
+   "note": "absolute private-job media/project paths replaced by /fixture-source/<fixture>; media and RelativePath point at ./lumetri_rgb_curves_probe.ramp.png (the same in-house ramp); re-gzipped; nothing else changed"
+  }
+ },
+ "media": [
+  {
+   "file_name": "lumetri_rgb_curves_probe.ramp.png",
+   "committed": false,
+   "local_evidence": true,
+   "sha256": "d76a872ce6c1f6ca80d4c0c9926af2d00fdd470ea8e6819a4ffcf09a987847e2",
+   "note": "shared with lumetri_rgb_curves_probe; see its provenance for the generator and bands"
+  }
+ ],
+ "sequence_uid": "d0ca1f44-75cd-48dd-841a-b5ce49d5f23d",
+ "sequence_name": "Lumetri Arbitrary Probe",
+ "premiere_version": "26.5.2",
+ "colour_setup": {
+  "working_space": "Rec. 709",
+  "graphics_white": 203,
+  "maximum_bit_depth": false
+ },
+ "authoring": {
+  "host": {
+   "operation": "headless-adobe run_jsx (managed, native save + close + reopen)",
+   "request_id": "lane-d-w5-pr-author-multiclip-v1",
+   "script": {
+    "repo_path": "crates/premiere_file/tests/fixtures/lumetri_rgb_curves_probe.author.jsx"
+   },
+   "result": "eight back-to-back 1 s clips (30 fps, 1920x1080), one default Lumetri Color each; artifact sha256 05547fccbc1b0eb64493495b4fc679e131b4fc3e208357d0658b550aabf1d6db"
+  },
+  "payloads": {
+   "operation": "offline edit of each clip's Lumetri ParameterID 47 StartKeyframeValue (inline base64 of 12 little-endian f64, fresh BinaryHash with the byte length + 12 suffix)",
+   "spec": {
+    "clips": [
+     {
+      "47": [
+       0,
+       0.5,
+       0.5,
+       0,
+       0.5,
+       0.5,
+       0,
+       0.5,
+       0,
+       0,
+       0.5,
+       0
+      ]
+     },
+     {
+      "47": [
+       0,
+       0.5,
+       0,
+       0,
+       0.5,
+       0.5,
+       0,
+       0.5,
+       0.5,
+       0,
+       0.5,
+       0
+      ]
+     },
+     {
+      "47": [
+       0,
+       0.5,
+       0.5,
+       0,
+       0.5,
+       0,
+       0,
+       0.5,
+       0.5,
+       0,
+       0.5,
+       0
+      ]
+     },
+     {
+      "47": [
+       120,
+       0.5,
+       0.5,
+       240,
+       0.5,
+       0.5,
+       0,
+       0.5,
+       0.5,
+       0,
+       0.5,
+       0
+      ]
+     },
+     {
+      "47": [
+       0,
+       0.75,
+       0,
+       0,
+       0.75,
+       0,
+       0,
+       0.25,
+       0,
+       0,
+       0.5,
+       0
+      ]
+     },
+     {
+      "47": [
+       200,
+       0.3,
+       0.6,
+       0,
+       0.5,
+       0,
+       0,
+       0.5,
+       0,
+       0,
+       0.5,
+       0
+      ]
+     },
+     {
+      "47": [
+       0,
+       0.5,
+       0,
+       200,
+       0.3,
+       0.6,
+       0,
+       0.5,
+       0,
+       0,
+       0.5,
+       0
+      ]
+     },
+     {
+      "47": [
+       30,
+       0.6,
+       0.4,
+       150,
+       0.4,
+       0.3,
+       270,
+       0.7,
+       0.5,
+       60,
+       0.8,
+       0.9
+      ]
+     }
+    ]
+   },
+   "spec_note": "per clip: Shadows, Midtones, Highlights and fourth wheel as (hue degrees, luma, amount)"
+  }
+ },
+ "reference": {
+  "file_name": "lumetri_color_wheels_probe.premiere-direct-v1.mp4",
+  "committed": false,
+  "local_evidence": true,
+  "size_bytes": 118301,
+  "sha256": "b3cecb2bbb4ea4ba7bee2b179f371e65dfbbfee982cc261fc26e87e992d8e5e6",
+  "operation": "headless-adobe render_premiere (Premiere 26.5.2 Sequence.exportAsMediaDirect, Apple ProRes 4444 preset, lossless RGB intermediate packaged as H.264 BT.709, profile premiere-rgb-animation-bt709-v1)",
+  "request_id": "w-w5-render-w4-v1",
+  "rendered_from_sha256": "1d35d59a556c84f1c18074854e48d68e47b3c998ba385bdaf034697262738284",
+  "lossless_intermediate_sha256": "77ca44462b495ff22c6ab42fd14520e945bde0aa9a3fa107b96ab247051a064d",
+  "measurements_note": "measured on the lossless intermediate (frame 30k+15 of clip k, grey ramp rows 100-169 per input code): every colour-band pixel equals the grey ramp output at its channel code (exact per-channel transfer); the fitted lift/power/gain model of convert::lumetri_wheels is within 3.0 codes on these eight clips and 3.2 codes over 63 measured wheel settings (mean 0.29)"
+ }
+}

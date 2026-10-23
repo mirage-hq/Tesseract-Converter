@@ -12,10 +12,19 @@ use crate::{
 };
 use std::collections::BTreeSet;
 
+mod apply_color_lut;
+mod compositing;
+mod curves;
 mod hue_saturation;
+mod levels;
+mod lumetri;
+
+pub(crate) use compositing::NativeEffectCompositing;
 
 #[cfg(test)]
 mod animation_tests;
+#[cfg(test)]
+mod color_fixture_tests;
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct NativeEffectProperty {
@@ -28,12 +37,36 @@ pub(crate) struct NativeEffectProperty {
     pub animation: Option<Track>,
 }
 
+/// One instance payload of an arbitrary-data control (pard kind 11), which
+/// has no scalar property. Only controls with a typed writer are accepted.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct NativeArbitraryData {
+    pub match_name: String,
+    pub payload: Vec<u8>,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct NativeEffect {
     pub match_name: String,
     pub name: String,
     pub enabled: bool,
     pub properties: Vec<NativeEffectProperty>,
+    pub arbitrary: Vec<NativeArbitraryData>,
+    pub compositing: NativeEffectCompositing,
+    /// The LUT of an Apply Color LUT instance; `None` for every other effect.
+    pub lut: Option<NativeLut>,
+}
+
+/// The LUT an Apply Color LUT instance embeds as its sequence data.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct NativeLut {
+    /// The FX `.cube` asset it comes from.
+    pub asset_id: fx_schema::AssetId,
+    /// The file name AE shows (`Using: <name>`) and records in the profile.
+    pub file_name: String,
+    /// The encoded device-link sequence data; export binds it from the
+    /// archive asset after lowering, and the writer requires it.
+    pub sequence_data: Option<Vec<u8>>,
 }
 
 pub(crate) fn new_effect(
@@ -89,6 +122,9 @@ pub(crate) fn new_effect(
         name: definition.name.clone(),
         enabled,
         properties,
+        arbitrary: Vec::new(),
+        compositing: NativeEffectCompositing::default(),
+        lut: None,
     })
 }
 
@@ -109,6 +145,110 @@ fn string(tag: [u8; 4], value: &str) -> Result<Chunk, RifxError> {
             .ok_or(RifxError::Invalid("invalid effect string"))?
             .to_vec(),
     )
+}
+
+/// The `tdb4` descriptor AE 26.5 saves on every pinned arbitrary-data leaf
+/// (Curves table, all 24 Lumetri controls, Levels Histogram): Hue/Saturation's
+/// Channel Range layout. The word at offset 12 is the property clock, as on
+/// every other leaf: `0x7800` in the 30 fps colour fixtures, `0x6000` in the
+/// 24 fps effect catalog.
+fn arbitrary_descriptor(
+    clock: super::keyframes::PropertyClock,
+) -> crate::schema::view_records::StaticPropertyRecord {
+    use crate::schema::view_records::StaticPropertyRecord;
+    let mut bytes = StaticPropertyRecord::new(1, 7, 1, 0x60007, 0x10008, 0, false).encode();
+    bytes[12..16].copy_from_slice(&clock.ticks().to_be_bytes());
+    bytes[79] = 1;
+    StaticPropertyRecord::decode(&bytes).expect("fixed-size descriptor")
+}
+
+/// AE 26.5's default payload of one Lumetri arbitrary-data control (tests
+/// build authored payloads from it).
+#[cfg(test)]
+pub(crate) fn lumetri_default_payload(control: &str) -> Option<Vec<u8>> {
+    lumetri::default_payload(control)
+}
+
+/// The payload `effect` writes for the arbitrary-data `control`: its own
+/// (an exported Lumetri section), else the native default.
+fn instance_arbitrary_payload(effect: &NativeEffect, control: &str) -> Option<Vec<u8>> {
+    if effect.match_name == lumetri::MATCH_NAME
+        && let Some(data) = effect
+            .arbitrary
+            .iter()
+            .find(|data| data.match_name == control)
+    {
+        return Some(data.payload.clone());
+    }
+    default_arbitrary_payload(&effect.match_name, control)
+}
+
+/// The native default payload of an arbitrary-data control whose instance
+/// state this writer emits verbatim (Lumetri, Levels).
+fn default_arbitrary_payload(effect: &str, control: &str) -> Option<Vec<u8>> {
+    if effect == lumetri::MATCH_NAME {
+        lumetri::default_payload(control)
+    } else {
+        levels::default_payload(control)
+    }
+}
+
+/// Insert each default arbitrary-data control's leaf at its native
+/// declaration position: before the next declared control present in the
+/// instance, or before the Compositing Options group.
+fn insert_default_arbitrary_leaves(
+    group: &mut Chunk,
+    effect: &NativeEffect,
+    definition: &definitions::EffectDefinition,
+    clock: super::keyframes::PropertyClock,
+) -> Result<(), RifxError> {
+    let children = group
+        .children_mut()
+        .ok_or(RifxError::Invalid("missing native effect group"))?;
+    for (position, parameter) in definition.parameters.iter().enumerate() {
+        let Some(payload) = instance_arbitrary_payload(effect, &parameter.match_name) else {
+            continue;
+        };
+        let index = definition.parameters[position + 1..]
+            .iter()
+            .map(|later| later.match_name.as_str())
+            .chain([compositing::MATCH_NAME])
+            .find_map(|name| {
+                children.iter().position(|chunk| {
+                    chunk.id() == *b"tdmn"
+                        && chunk.data_payload().is_some_and(|stored| {
+                            stored.starts_with(name.as_bytes())
+                                && stored.get(name.len()) == Some(&0)
+                        })
+                })
+            })
+            .ok_or(RifxError::Invalid("missing arbitrary-data insertion point"))?;
+        // AE saves hidden declarations (header flag 0x200) with leaf flags 3.
+        let flags: u32 = if parameter.header_flags[1] & 0x200 != 0 {
+            3
+        } else {
+            1
+        };
+        let property = Chunk::list(
+            *b"tdbs",
+            vec![
+                Chunk::data(*b"tdsb", flags.to_be_bytes())?,
+                views::name_payload(&parameter.label)?,
+                Chunk::data(*b"tdb4", arbitrary_descriptor(clock).encode())?,
+                Chunk::data(*b"cdat", 0_u32.to_be_bytes())?,
+            ],
+        );
+        // aRbs is a sibling of tdbs in this named property run, not its child.
+        children.splice(
+            index..index,
+            [
+                match_name(&parameter.match_name)?,
+                property,
+                Chunk::list(*b"aRbs", vec![Chunk::data(*b"aRbp", payload)?]),
+            ],
+        );
+    }
+    Ok(())
 }
 
 /// Native Master parameter words are signed 16:16, unlike ordinary f64 leaves.
@@ -140,6 +280,7 @@ fn plugin_with_clock(
 ) -> Result<Chunk, RifxError> {
     let definition = definitions::definition(&effect.match_name)
         .ok_or(RifxError::Invalid("unknown native effect definition"))?;
+    curves::validate(effect)?;
     let count = u32::try_from(definition.parameters.len())
         .map_err(|_| RifxError::Invalid("too many effect definitions"))?;
     let mut table = vec![Chunk::data(*b"parn", count.to_be_bytes())?];
@@ -167,11 +308,31 @@ fn plugin_with_clock(
                 .ok_or(RifxError::Invalid("missing Hue/Saturation Master value"))?;
             instance.payload_words[0] = hue_master_fixed(*value)?;
         }
+        if effect.match_name == lumetri::MATCH_NAME
+            && parameter.kind == 10
+            && let Some(property) = effect
+                .properties
+                .iter()
+                .find(|property| property.match_name == parameter.match_name)
+        {
+            let value = property
+                .values
+                .first()
+                .ok_or(RifxError::Invalid("missing Lumetri slider value"))?;
+            lumetri::mirror_slider_value(&mut instance, *value);
+        }
+        apply_color_lut::label_instance(effect, &mut instance);
         table.push(definitions::encode_parameter(&instance)?);
         if effect.match_name == "ADBE HUE SATURATION"
             && parameter.match_name == "ADBE HUE SATURATION-0003"
         {
             table.push(hue_saturation::default_data()?);
+        }
+        if parameter.match_name == crate::effects::curves::CONTROL {
+            table.push(curves::default_data()?);
+        }
+        if let Some(payload) = instance_arbitrary_payload(effect, &parameter.match_name) {
+            table.push(Chunk::data(*b"aRbp", payload)?);
         }
         if let Some(popup) = &parameter.popup {
             table.push(string(*b"pdnm", popup)?);
@@ -244,23 +405,26 @@ fn plugin_with_clock(
         nodes.push((property.match_name.as_str(), node));
     }
     nodes.push((
-        "ADBE Effect Built In Params",
-        views::group(1, "Compositing Options", vec![])?,
+        compositing::MATCH_NAME,
+        compositing::group(&effect.compositing, clock)?,
     ));
     let mut group = views::group(u32::from(effect.enabled), "-_0_/-", nodes)?;
     if effect.match_name == "ADBE HUE SATURATION" {
         hue_saturation::insert_instance(&mut group, effect)?;
     }
-    Ok(Chunk::list(
-        *b"sspc",
-        vec![
-            string(*b"fnam", &effect.name)?,
-            Chunk::list(*b"parT", table),
-            group,
-            Chunk::data(*b"pgui", vec![0; 16])?,
-            Chunk::data(*b"elab", vec![255])?,
-        ],
-    ))
+    if effect.match_name == crate::effects::curves::MATCH_NAME {
+        curves::insert_instance(&mut group, effect, clock)?;
+    }
+    insert_default_arbitrary_leaves(&mut group, effect, definition, clock)?;
+    let mut records = vec![
+        string(*b"fnam", &effect.name)?,
+        Chunk::list(*b"parT", table),
+        group,
+    ];
+    records.extend(apply_color_lut::sequence_data(effect)?);
+    records.push(Chunk::data(*b"pgui", vec![0; 16])?);
+    records.push(Chunk::data(*b"elab", vec![255])?);
+    Ok(Chunk::list(*b"sspc", records))
 }
 
 #[cfg(test)]
@@ -273,6 +437,7 @@ pub(crate) fn effect_parade(
         effects,
         owner_id,
         owner_size,
+        0,
         super::keyframes::PropertyClock::DEFAULT,
     )
 }
@@ -281,11 +446,13 @@ pub(super) fn effect_parade_with_clock(
     effects: &[NativeEffect],
     owner_id: u32,
     owner_size: [f64; 2],
+    owner_mask_count: usize,
     clock: super::keyframes::PropertyClock,
 ) -> Result<Chunk, RifxError> {
     let nodes = effects
         .iter()
         .map(|effect| {
+            effect.compositing.validate(owner_mask_count)?;
             Ok((
                 effect.match_name.as_str(),
                 plugin_with_clock(effect, owner_id, owner_size, clock)?,
@@ -305,14 +472,18 @@ pub(crate) fn apply(
         layer,
         effects,
         owner_size,
+        0,
         super::keyframes::PropertyClock::DEFAULT,
     )
 }
 
+/// `owner_mask_count` is the number of fresh masks on the owner, which effect
+/// Compositing Options mask references must name.
 pub(super) fn apply_with_clock(
     layer: &mut Chunk,
     effects: &[NativeEffect],
     owner_size: [f64; 2],
+    owner_mask_count: usize,
     clock: super::keyframes::PropertyClock,
 ) -> Result<(), AepWriteError> {
     if effects.is_empty() {
@@ -353,7 +524,7 @@ pub(super) fn apply_with_clock(
         index..index,
         [
             match_name("ADBE Effect Parade")?,
-            effect_parade_with_clock(effects, owner_id, owner_size, clock)?,
+            effect_parade_with_clock(effects, owner_id, owner_size, owner_mask_count, clock)?,
         ],
     );
     Ok(())
@@ -406,6 +577,11 @@ pub(crate) fn register_definitions(chunks: &mut Vec<Chunk>) -> Result<(), AepWri
         // first layer's edited controls, enable state, owner or animation keys.
         let mut canonical = new_effect(&name, true, [1.0; 2])?;
         canonical.properties.clear();
+        canonical.arbitrary.clear();
+        canonical.compositing = NativeEffectCompositing::default();
+        if name == apply_color_lut::MATCH_NAME {
+            canonical.lut = apply_color_lut::first_instance_lut(chunks);
+        }
         records.push(Chunk::list(
             *b"EfDf",
             vec![match_name(&name)?, plugin(&canonical, 0, [1.0; 2])?],
@@ -437,6 +613,9 @@ mod tests {
             name: "Unknown".into(),
             enabled: true,
             properties: Vec::new(),
+            arbitrary: Vec::new(),
+            compositing: NativeEffectCompositing::default(),
+            lut: None,
         };
         assert!(effect_parade(&[effect], 7, [120.0, 80.0]).is_err());
     }

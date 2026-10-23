@@ -2975,6 +2975,7 @@ fn written_track_matte_keys_name_the_matte_track_id_and_read_back() {
     source.video.as_mut().unwrap().kind = crate::schema::PrMediaKind::Video {
         codec: Some(crate::schema::VideoCodec::H264),
         hdr_profile: None,
+        color_space_override: None,
     };
     source.name = "source.mp4".into();
     source.relative_path = Some("./media/source.mp4".into());

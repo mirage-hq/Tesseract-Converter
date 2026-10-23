@@ -10,7 +10,10 @@ mod export_still;
 mod invert_alpha;
 mod linked_alpha;
 mod lumetri;
+mod lumetri_basic;
+mod lumetri_curves;
 mod lumetri_nested;
+mod lumetri_round_trip;
 mod lumetri_vignette;
 mod nested_visibility;
 mod offset;
@@ -18,6 +21,7 @@ mod pixel_motion_blur;
 mod rates;
 mod sampled;
 mod still_motion;
+mod template_placeholder;
 mod video_motion;
 mod white_balance;
 

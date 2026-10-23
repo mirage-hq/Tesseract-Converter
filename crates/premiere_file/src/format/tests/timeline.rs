@@ -110,6 +110,7 @@ fn a_still_span_may_differ_from_its_placement_only_at_unit_forward_rate() {
     let video = PrMediaKind::Video {
         codec: None,
         hdr_profile: None,
+        color_space_override: None,
     };
     // Premiere keeps a still's 5 s span from its one-hour in-point.
     let source_in = FrameRate::Fps30.generator_in_ticks();

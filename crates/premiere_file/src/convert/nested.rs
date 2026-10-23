@@ -151,6 +151,13 @@ pub(super) struct LayerScope<'a, 'm> {
     /// layer's effects at any nesting depth; the same in every scope of one
     /// document.
     pub(super) document_canvas: [u32; 2],
+    /// The document's `hdrGraphicsWhiteNits`: the admitted HDR sequence
+    /// graphics white, else the FX default. HDR Graphic source points decode
+    /// against it so native graphics white stays FX 1.0.
+    pub(super) graphics_white: f64,
+    /// Whether the document is an FX ACES document (its sequence works in
+    /// ACEScct); the same in every scope of one document.
+    pub(super) aces: bool,
 }
 
 impl<'a, 'm> LayerScope<'a, 'm> {
@@ -174,6 +181,8 @@ impl<'a, 'm> LayerScope<'a, 'm> {
             linked,
             on_document_clock: true,
             document_canvas,
+            graphics_white: fx_conv::DEFAULT_GRAPHICS_WHITE_NITS,
+            aces: false,
         }
     }
 }
@@ -1038,6 +1047,8 @@ pub(super) fn track_nests(
                     && !inner_clock
                     && active_range.start == Time::ZERO,
                 document_canvas: scope.document_canvas,
+                graphics_white: scope.graphics_white,
+                aces: scope.aces,
             },
             media,
             asset_ids,
@@ -1081,7 +1092,13 @@ pub(super) fn track_nests(
             && track_matte.is_none()
             && opacity_guide.is_none()
             && blends_inside(&content);
-        if frame_needed || isolate_blends {
+        // An empty template placeholder has no picture to frame: without a
+        // Crop or Linear Wipe to keep, its group gets no frame guide, so it
+        // stays an empty group that export writes as an empty nest again.
+        let placeholder_frame = nest.sequence.empty_template_placeholder
+            && nest.crop.is_default()
+            && nest.linear_wipe.is_none();
+        if (frame_needed || isolate_blends) && !placeholder_frame {
             // Crop clips the nest's own frame before Motion. The guide stays
             // editable, including when export normalizes the inner canvas.
             let (guide_id, mask_id, guide_transform, rect, feather) = match wipe_guide {
@@ -1466,6 +1483,8 @@ fn reverse_nest(
             linked: &mut *scope.linked,
             on_document_clock: false,
             document_canvas: scope.document_canvas,
+            graphics_white: scope.graphics_white,
+            aces: scope.aces,
         },
         media,
         asset_ids,
@@ -1796,6 +1815,11 @@ pub(super) struct LayerExport<'a, 'd> {
     pub(super) fonts: &'a BTreeMap<String, FontAssetProperties>,
     pub(super) audio: &'a mut Vec<PrAudioOccurrence>,
     pub(super) media_facts: &'a BTreeMap<String, MediaFacts>,
+    /// The `.cube` assets that `source.inputTransform` LUTs name.
+    pub(super) input_luts: &'a crate::cube_lut::InputLutAssets,
+    /// Whether the document is an FX ACES document, exported as an ACEScct
+    /// sequence whose clips declare camera inputs by Color Space Override.
+    pub(super) aces: bool,
     /// Longest independently authored duration for each shared video asset.
     pub(super) authored_video_durations: &'a BTreeMap<String, u64>,
     /// Preset video frames that were natural before source-frame preparation.
@@ -2780,6 +2804,8 @@ pub(super) fn export_group_at<'d>(
         property_tracks: &mut *context.property_tracks,
         written: &mut child_written,
         media_facts: context.media_facts,
+        input_luts: context.input_luts,
+        aces: context.aces,
         authored_video_durations: context.authored_video_durations,
         natural_frames: context.natural_frames,
         audio_facts: context.audio_facts,
@@ -2849,6 +2875,22 @@ pub(super) fn export_group_at<'d>(
     let empty = inner_tracks
         .iter()
         .all(|track| track.items.is_empty() && track.nests.is_empty());
+    // A group without children is an empty template placeholder (as imported
+    // from an empty native sequence): it exports, without a report, as an
+    // empty nested sequence that keeps the group's Motion, Opacity and
+    // effects. A group whose children all failed to export is not one.
+    let placeholder = empty
+        && group.layers.is_empty()
+        && audio.is_empty()
+        && stage.is_none()
+        && geometry.is_none();
+    if placeholder && inner_tracks.is_empty() {
+        inner_tracks.push(PrVideoTrack {
+            transitions: Vec::new(),
+            items: Vec::new(),
+            nests: Vec::new(),
+        });
+    }
     let inner_end = inner_tracks
         .iter()
         .flat_map(|track| {
@@ -2900,7 +2942,7 @@ pub(super) fn export_group_at<'d>(
         );
         return Ok(None);
     }
-    if empty {
+    if empty && !placeholder {
         // Sound-only nests would render opaque black in Premiere.
         if !audio.is_empty() {
             if let Some(media) = media {
@@ -2958,6 +3000,7 @@ pub(super) fn export_group_at<'d>(
                 enabled: !group.is_hidden,
                 sequence: PrSequence {
                     hdr: context.hdr_settings,
+                    aces: None,
                     native_frame_ticks: None,
                     id: None,
                     name: sequence_name.clone(),
@@ -2969,6 +3012,7 @@ pub(super) fn export_group_at<'d>(
                     height: frame[1],
                     timeline_end_ticks: captured_end,
                     adjustment_only_template: false,
+                    empty_template_placeholder: false,
                 },
             };
             context.packer.record_pending_nest(
@@ -3074,6 +3118,7 @@ pub(super) fn export_group_at<'d>(
         enabled: !group.is_hidden,
         sequence: PrSequence {
             hdr: context.hdr_settings,
+            aces: None,
             native_frame_ticks: None,
             id: None,
             name: sequence_name,
@@ -3085,6 +3130,7 @@ pub(super) fn export_group_at<'d>(
             height: frame[1],
             timeline_end_ticks: 0,
             adjustment_only_template: false,
+            empty_template_placeholder: placeholder,
         },
     };
     // Sequence duration remains derived from real child placements.

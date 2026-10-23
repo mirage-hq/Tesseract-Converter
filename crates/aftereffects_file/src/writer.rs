@@ -35,6 +35,14 @@ pub(crate) use dashes::StrokeDashes;
 pub(crate) use keyframes::{
     Easing as KeyframeEasing, Keyframe as NumericKeyframe, Track as NumericTrack,
 };
+/// Static paint RGB is finite and nonnegative; components above 1.0 are 32 bpc
+/// super-white (an HDR export's codes past the transfer peak). Alpha is 0..=1.
+pub(crate) fn paint_color_is_valid(color: &[f64]) -> bool {
+    let (rgb, alpha) = color.split_at(color.len().min(3));
+    rgb.iter().all(|value| value.is_finite() && *value >= 0.0)
+        && alpha.iter().all(|value| (0.0..=1.0).contains(value))
+}
+
 /// Check the native COLOR profile before lowering admits keys, retaining static
 /// best-effort content when temporal handles or vector speeds cannot be written.
 pub(crate) fn validate_effect_color(track: &NumericTrack) -> Result<(), crate::rifx::RifxError> {
@@ -59,7 +67,7 @@ pub(crate) fn validate_effect_float_at_rate(
 }
 
 pub(crate) use layer_options::{NativeLayerOptions, NativeMatteRef};
-pub(crate) use masks::{NativeMaskMode, NativeMaskSpec};
+pub(crate) use masks::{NativeMaskMode, NativeMaskSpec, native_identity as native_mask_identity};
 #[cfg(test)]
 pub(crate) use rects::write_composition;
 pub(crate) use rects::{

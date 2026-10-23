@@ -22,6 +22,7 @@ mod animation;
 mod audio;
 mod caption;
 mod color_matte;
+mod color_setup;
 mod dissolve;
 mod effects;
 mod film_impact;

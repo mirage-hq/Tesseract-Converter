@@ -38,6 +38,7 @@ pub(super) fn media_kind(
         return Ok(PrMediaKind::Video {
             codec: None,
             hdr_profile: None,
+            color_space_override: None,
         });
     }
     if numbered {

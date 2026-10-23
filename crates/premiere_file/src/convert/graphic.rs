@@ -196,8 +196,11 @@ pub(super) fn import_graphic(
         return Ok(result);
     };
     let record = graphic.id().unwrap_or("graphic");
+    let white = scope.graphics_white;
     let mut messages = Vec::new();
-    let mut binding = fx_conv::GeneratedHdrColorBinding::new(transfer, &mut messages);
+    let mut binding =
+        fx_conv::GeneratedHdrColorBinding::with_graphics_white(transfer, white, &mut messages)
+            .map_err(|error| crate::error::unsupported(format!("{record}: {error}")))?;
     let mut value = serde_json::to_value(layer)?;
     binding.layer(&mut value);
     let layer = serde_json::from_value(value)?;
@@ -218,7 +221,7 @@ pub(super) fn import_graphic(
     for message in messages {
         approximate(omissions, record, message);
     }
-    approximate(omissions, record, "declared HDR Graphic source point colours normalized to FX white 609; native 8-bit storage, encoded interpolation, effects/blends and destination white/tone/gamut adaptation remain unproved");
+    approximate(omissions, record, format!("declared HDR Graphic source point colours normalized to FX graphics white {white} cd/m²; native 8-bit storage, encoded interpolation, effects/blends and destination white/tone/gamut adaptation remain unproved"));
     Ok(Some((layer, guide.clone())))
 }
 
