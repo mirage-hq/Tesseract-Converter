@@ -211,6 +211,8 @@ jobs:
           version_line=$("$binary" --version | tr -d '\r')
           test "$version_line" = "tsrct-conv $VERSION"
           "$binary" --help >/dev/null
+          # The restored Rust cache can contain bundle outputs from an earlier release.
+          rm -rf target/native-bundle target/release-smoke
           python scripts/native_bundle.py --binary "$binary" --ffmpeg-prefix "$FFMPEG_DIR" \
             --platform "$RELEASE_PLATFORM" --output target/native-bundle
           packaged=target/native-bundle/tsrct-conv
